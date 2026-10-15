@@ -21,6 +21,14 @@ public sealed class InstalledMod
     public List<string> LuaFolders { get; set; } = new();
     /// <summary>Pak files, relative to the game root, at their ENABLED location.</summary>
     public List<string> Files { get; set; } = new();
+    /// <summary>The mod's id on Nexus Mods (retrorewindvideostoresimulator), when it came from there.</summary>
+    public int? NexusModId { get; set; }
+    /// <summary>The Nexus version that was installed, to tell when an update is out.</summary>
+    public string? NexusVersion { get; set; }
+
+    /// <summary>Fields this launcher does not know (written by a newer one): kept as they are when the file is saved again.</summary>
+    [System.Text.Json.Serialization.JsonExtensionData]
+    public Dictionary<string, JsonElement>? Unknown { get; set; }
 }
 
 public sealed class InstalledManifest
@@ -28,13 +36,27 @@ public sealed class InstalledManifest
     public int SchemaVersion { get; set; } = 1;
     public List<InstalledMod> Mods { get; set; } = new();
 
+    [System.Text.Json.Serialization.JsonExtensionData]
+    public Dictionary<string, JsonElement>? Unknown { get; set; }
+
     public static InstalledManifest Load(string path)
     {
         string? text = AtomicFile.TryReadShared(path);
         if (string.IsNullOrWhiteSpace(text)) return new InstalledManifest();
         try
         {
-            return JsonSerializer.Deserialize<InstalledManifest>(text, JsonDefaults.Pretty) ?? new InstalledManifest();
+            var manifest = JsonSerializer.Deserialize<InstalledManifest>(text, JsonDefaults.Pretty) ?? new InstalledManifest();
+            // A launcher older than the Nexus browser drops the Nexus fields when it saves the file;
+            // the record's id ("nexus-97") still says which mod it is.
+            foreach (var m in manifest.Mods.Where(m => m.NexusModId == null && m.Id.StartsWith("nexus-", StringComparison.OrdinalIgnoreCase)))
+            {
+                if (int.TryParse(m.Id.AsSpan(6), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int id) && id > 0)
+                {
+                    m.NexusModId = id;
+                    m.NexusVersion ??= m.Version;
+                }
+            }
+            return manifest;
         }
         catch (JsonException ex)
         {

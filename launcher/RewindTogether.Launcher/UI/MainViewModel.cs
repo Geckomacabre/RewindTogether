@@ -182,6 +182,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         if (_started && Settings.CheckForUpdates && DateTime.UtcNow - _lastUpdateCheck > UpdateCheckEvery)
             _ = CheckForUpdatesAsync(manual: false);
+        PollNexusDownloads();
         if (Game == null) return;
         _gamePid = GameProcess.FindProcessId(Game);
         bool running = _gamePid != null;
@@ -532,15 +533,28 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// Installs a package (zip, folder or pak) and records it. Asks before replacing anything the
     /// launcher did not install. Rewind Together always replaces its own folder.
     /// </summary>
-    public async Task<bool> InstallPackageAsync(string sourcePath, CatalogEntry? entry, string origin)
+    public async Task<bool> InstallPackageAsync(string sourcePath, CatalogEntry? entry, string origin, NexusSource? nexus = null)
     {
         if (Game == null) { await InformAsync("Retro Rewind not found", "Find the game first (Diagnostics > Game folder > Browse).", "bad"); return false; }
         if (!await EnsureGameClosedAsync("press Install again")) return false;
+        // A file picked by hand that looks like a Nexus download: ask Nexus which mod it is, so it
+        // gets its Nexus id (update badges, the co-op mod check) like one installed from the browser.
+        if (nexus == null && entry == null && origin == "file" && NexusFileName.LooksLikeNexusDownload(sourcePath))
+            nexus = await IdentifyNexusFileAsync(sourcePath);
 
         PackageSource? src = null;
         try
         {
-            src = PackageSource.Open(sourcePath);
+            string ext = Path.GetExtension(sourcePath).ToLowerInvariant();
+            if (ext is ".7z" or ".rar")
+                await RunBusyAsync("Unpacking " + Path.GetFileName(sourcePath), async busy =>
+                {
+                    busy.Report("Large mods can take a minute.", null);
+                    src = await Task.Run(() => PackageSource.Open(sourcePath));
+                });
+            else
+                src = PackageSource.Open(sourcePath);
+            if (src == null) return false;
             var pkg = PackageAnalyzer.Analyze(src,
                 fallbackName: entry?.FolderName,
                 forcedFolder: entry?.Folder ?? (entry != null && entry.Kind == ModKind.Ue4ssLua ? entry.FolderName : null),
@@ -554,7 +568,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 if (!install || !await InstallUe4ssAsync()) return false;
             }
 
-            var who = MakeIdentity(pkg, entry, origin, src.DisplayName);
+            var who = MakeIdentity(pkg, entry, origin, src.DisplayName, nexus, new ModManager(Game, Paths.InstalledManifestFile).Managed());
             if (pkg.IsRewindTogether && pkg.ModJsonGameBuild != null && Game.BuildId != null && pkg.ModJsonGameBuild != Game.BuildId)
                 Notify($"Note: this Rewind Together build was tested on game build {pkg.ModJsonGameBuild}; you have {Game.BuildId}.", "warn");
 
@@ -604,12 +618,27 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    private static ModIdentity MakeIdentity(PackageAnalysis pkg, CatalogEntry? entry, string origin, string displayName)
+    internal static ModIdentity MakeIdentity(PackageAnalysis pkg, CatalogEntry? entry, string origin, string displayName,
+        NexusSource? nexus = null, IReadOnlyList<InstalledMod>? managed = null)
     {
         if (entry != null)
             return new ModIdentity(entry.Id, entry.Name, entry.Version, origin, entry.Sha256);
         if (pkg.IsRewindTogether)
             return new ModIdentity(GameInstall.RewindTogetherId, "Rewind Together", pkg.ModJsonVersion ?? ReadNetLuaVersion(pkg) ?? "local", origin);
+        if (nexus != null)
+        {
+            // An update of something already installed keeps that record (and its id): the same
+            // Nexus mod, or the same folder / pak, installed earlier by hand.
+            var lua = pkg.LuaFolders.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var paks = pkg.Components.Where(c => c.Kind != ModKind.Ue4ssLua)
+                .SelectMany(c => c.Files.Select(f => Path.GetFileName(f.Target))).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var previous = managed?.FirstOrDefault(m => m.NexusModId == nexus.ModId)
+                ?? managed?.FirstOrDefault(m => m.LuaFolders.Any(lua.Contains) || m.Files.Any(f => paks.Contains(Path.GetFileName(f))));
+            string recordId = previous != null && !previous.Id.Equals(GameInstall.RewindTogetherId, StringComparison.OrdinalIgnoreCase)
+                ? previous.Id : $"nexus-{nexus.ModId}";
+            return new ModIdentity(recordId, nexus.Name, nexus.Version.Length > 0 ? nexus.Version : "?", origin,
+                NexusModId: nexus.ModId, NexusVersion: nexus.Version);
+        }
         string id = PackageAnalyzer.SanitizeFolderName(pkg.ModJsonId ?? pkg.LuaFolders.FirstOrDefault() ?? displayName).ToLowerInvariant();
         return new ModIdentity("local-" + id, pkg.ModJsonName ?? pkg.SuggestedName, pkg.ModJsonVersion ?? "local", origin);
     }
@@ -679,8 +708,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         var dlg = new OpenFileDialog
         {
             Title = "Choose a mod to add",
-            Filter = "Mod files (*.zip;*.pak)|*.zip;*.pak|All files (*.*)|*.*",
-            InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) + "\\Downloads",
+            Filter = "Mod files (*.zip;*.7z;*.rar;*.pak)|*.zip;*.7z;*.rar;*.pak|All files (*.*)|*.*",
+            InitialDirectory = DownloadsFolder.Find(),
         };
         return dlg.ShowDialog() == true ? dlg.FileName : null;
     }
@@ -962,6 +991,117 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 "Close this window and open RewindTogetherLauncher.exe again.", "warn");
         }
         Application.Current?.Shutdown();
+    }
+
+    // ------------------------------------------------------------------ Nexus Mods (Nexus.cs, NexusDownloads.cs)
+
+    private NexusClient? _nexus;
+    private NexusDownloadWatcher? _nexusDownloads;
+    private DateTime _lastNexusPoll = DateTime.MinValue;
+    private bool _installingNexus;
+
+    /// <summary>Nexus Mods' public API (no account needed to browse).</summary>
+    public NexusClient Nexus
+    {
+        get
+        {
+            if (_nexus != null) return _nexus;
+            try { _nexus = new NexusClient(Settings.NexusApiBase); }
+            catch (ArgumentException ex)
+            {
+                Log.Warn(ex.Message + " Using " + NexusClient.DefaultApiBase);
+                _nexus = new NexusClient();
+            }
+            return _nexus;
+        }
+    }
+
+    /// <summary>Waits for "Get it on Nexus" downloads to land in the player's Downloads folder.</summary>
+    public NexusDownloadWatcher NexusDownloads => _nexusDownloads ??= new NexusDownloadWatcher(StartArgs.DownloadsDir ?? DownloadsFolder.Find());
+
+    /// <summary>
+    /// "Download": opens the mod's main file's download page on Nexus (Nexus lets an app download
+    /// for a player only through its own site or, later, a registered sign-in, so the last click
+    /// happens there), waits for the file in Downloads, then installs it by itself.
+    /// </summary>
+    public async Task GetFromNexusAsync(NexusMod mod)
+    {
+        IReadOnlyList<NexusFile> files = Array.Empty<NexusFile>();
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            files = await Nexus.FilesAsync(mod.ModId, cts.Token);
+        }
+        catch (Exception ex) when (ex is NexusException or OperationCanceledException)
+        {
+            Log.Warn($"Could not list {mod.Name}'s files (the name pattern still works): {ex.Message}");
+        }
+        NexusDownloads.Want(mod, files);
+        Log.Info($"Waiting for a download of Nexus mod {mod.ModId} ({mod.Name}, {files.Count} known file names) in {NexusDownloads.Folder}");
+        string page = NexusLinks.DownloadPage(mod.ModId, files);
+        GameProcess.OpenInShell(page);
+        Notify($"{mod.Name}: click the download button on the Nexus page that just opened (free accounts: \"Slow download\"). " +
+               $"When it lands in {Path.GetFileName(NexusDownloads.Folder.TrimEnd('\\'))}, the launcher installs it by itself.", "info");
+        Mods.Browse.RefreshWaiting();
+    }
+
+    public void StopWaitingForNexus(int modId)
+    {
+        NexusDownloads.Forget(modId);
+        Mods.Browse.RefreshWaiting();
+    }
+
+    /// <summary>Every couple of seconds while something is wanted: install finished downloads.</summary>
+    private void PollNexusDownloads()
+    {
+        if (_nexusDownloads is not { IsWaiting: true } watcher || _installingNexus || DateTime.UtcNow - _lastNexusPoll < TimeSpan.FromSeconds(2)) return;
+        _lastNexusPoll = DateTime.UtcNow;
+        var found = watcher.Poll();
+        if (found.Count > 0) _ = InstallNexusDownloadsAsync(found);
+        else if (!watcher.IsWaiting) Mods.Browse.RefreshWaiting();
+    }
+
+    private async Task InstallNexusDownloadsAsync(IReadOnlyList<NexusDownloadMatch> found)
+    {
+        _installingNexus = true;
+        try
+        {
+            Mods.Browse.RefreshWaiting();
+            foreach (var m in found)
+            {
+                Log.Info($"Nexus download arrived: {m.Path} = mod {m.Mod.ModId} {m.Version}{(m.File == null ? " (by name pattern)" : "")}");
+                Notify($"{m.Mod.Name} downloaded - installing it.", "info");
+                await InstallPackageAsync(m.Path, null, "nexus", new NexusSource(m.Mod.ModId, m.Mod.Name, m.Version));
+            }
+        }
+        finally
+        {
+            _installingNexus = false;
+            Mods.Browse.RefreshInstalled();
+        }
+    }
+
+    /// <summary>Which Nexus mod a downloaded file is, by its MD5 (best effort, a few seconds at most).</summary>
+    private async Task<NexusSource?> IdentifyNexusFileAsync(string path)
+    {
+        try
+        {
+            string md5 = await Task.Run(() =>
+            {
+                using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16);
+                return Convert.ToHexString(System.Security.Cryptography.MD5.HashData(fs)).ToLowerInvariant();
+            });
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            if (await Nexus.FileByMd5Async(md5, cts.Token) is not { } file) return null;
+            var mod = (await Nexus.ModsByIdAsync(new[] { file.ModId }, cts.Token)).FirstOrDefault();
+            Log.Info($"{Path.GetFileName(path)} is Nexus mod {file.ModId} ({mod?.Name ?? file.Name}) {file.Version}");
+            return new NexusSource(file.ModId, mod?.Name ?? file.Name, file.Version.Length > 0 ? file.Version : mod?.Version ?? "");
+        }
+        catch (Exception ex) when (ex is NexusException or OperationCanceledException or IOException or UnauthorizedAccessException)
+        {
+            Log.Info($"Could not look {Path.GetFileName(path)} up on Nexus: {ex.Message}");
+            return null;
+        }
     }
 
     // ------------------------------------------------------------------ Discord status (DiscordPresence.cs)

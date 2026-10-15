@@ -10,11 +10,12 @@ namespace RewindTogether.Launcher.UI;
 
 public sealed class FriendItem : ObservableObject
 {
-    public FriendItem(FriendInfo f, ICommand join, ICommand invite, ModMismatch? mods = null)
+    public FriendItem(FriendInfo f, ICommand join, ICommand invite, ModMismatch? mods = null, ICommand? getMods = null)
     {
         Info = f;
         JoinCommand = join;
         InviteCommand = invite;
+        GetModsCommand = getMods;
         Mods = mods is { Any: true } ? mods : null;
     }
 
@@ -23,6 +24,9 @@ public sealed class FriendItem : ObservableObject
     public string ModsText => Mods?.ShortText ?? "";
     public bool ModsVisible => Mods != null;
     public string ModsTone => Mods?.Tone ?? "ok";
+    /// <summary>The host has mods from Nexus that this PC lacks: "Get their mods" shows them in the Mods tab.</summary>
+    public bool GetModsVisible => Mods?.CanGetHostMods == true && GetModsCommand != null;
+    public ICommand? GetModsCommand { get; }
 
     public FriendInfo Info { get; }
     public string Name => string.IsNullOrWhiteSpace(Info.Name) ? Info.Id.ToString() : Info.Name;
@@ -88,6 +92,7 @@ public sealed class PlayViewModel : ObservableObject, IDisposable
         JoinSteamIdCommand = new AsyncCommand(JoinSteamIdAsync, () => !FriendsLoading);
         JoinFriendCommand = new AsyncCommand(p => p is FriendItem f ? JoinSteamAsync(f.Info.Id, f.Name) : Task.CompletedTask, _ => !FriendsLoading);
         InviteFriendCommand = new RelayCommand(p => Invite(p as FriendItem), _ => _agent?.IsRunning == true && _session == SessionKind.Host);
+        GetFriendModsCommand = new AsyncCommand(p => p is FriendItem { Mods: { } m } f ? _main.Mods.ShowHostModsAsync(f.Name, m.NexusHostOnly) : Task.CompletedTask);
         SetupCommand = new AsyncCommand(SetupAsync);
         ToggleOtherWaysCommand = new RelayCommand(() => OtherWaysOpen = !OtherWaysOpen);
         _joinAddress = main.Settings.LastJoinAddress ?? "";
@@ -226,6 +231,7 @@ public sealed class PlayViewModel : ObservableObject, IDisposable
     public ICommand HostCommand { get; }
     public ICommand StopCommand { get; }
     public ICommand InviteFriendCommand { get; }
+    public ICommand GetFriendModsCommand { get; }
     public ObservableCollection<GuestItem> Guests { get; } = new();
     public ObservableCollection<FriendItem> InvitableFriends { get; } = new();
 
@@ -390,7 +396,7 @@ public sealed class PlayViewModel : ObservableObject, IDisposable
             var mine = _main.LocalModFingerprint();
             foreach (var f in friends.Where(f => f.Hosting))
                 HostingFriends.Add(new FriendItem(f, JoinFriendCommand, InviteFriendCommand,
-                    mine == null ? null : ModMismatch.Compare(mine, f.Fingerprint)));
+                    mine == null ? null : ModMismatch.Compare(mine, f.Fingerprint), GetFriendModsCommand));
             InvitableFriends.Clear();
             foreach (var f in friends.Where(f => !f.Hosting)) InvitableFriends.Add(new FriendItem(f, JoinFriendCommand, InviteFriendCommand));
 
@@ -523,8 +529,13 @@ public sealed class PlayViewModel : ObservableObject, IDisposable
         if (diff is not { Any: true }) return true;
         string who = string.IsNullOrWhiteSpace(name) ? "Your friend" : name;
         Log.Info($"Mods differ from {who}'s: {diff.Explain(who).Replace(Environment.NewLine, " / ")}");
-        return await _main.AskAsync($"{who}'s mods are different from yours", diff.Explain(who),
-            "Join anyway", "Cancel", diff.Tone);
+        if (!diff.CanGetHostMods)
+            return await _main.AskAsync($"{who}'s mods are different from yours", diff.Explain(who),
+                "Join anyway", "Cancel", diff.Tone);
+        if (await _main.AskAsync($"{who}'s mods are different from yours", diff.Explain(who), "Join anyway", "Get their mods", diff.Tone))
+            return true;
+        _ = _main.Mods.ShowHostModsAsync(who, diff.NexusHostOnly);
+        return false;
     }
 
     private async Task JoinAddressAsync()

@@ -58,6 +58,12 @@ public sealed class LauncherSettings
     /// <summary>Show "Playing Rewind Together - Hosting a video store" on the player's Discord profile.</summary>
     public bool DiscordStatus { get; set; } = true;
 
+    /// <summary>The Nexus Mods browser: adult-flagged mods stay hidden unless the player asks for them.</summary>
+    public bool NexusShowAdult { get; set; }
+    /// <summary>"downloads", "updated", "endorsements" or "newest".</summary>
+    public string NexusSort { get; set; } = "downloads";
+    public string NexusApiBase { get; set; } = NexusClient.DefaultApiBase;
+
     public string? LastJoinAddress { get; set; }
     public string? LastJoinSteamId { get; set; }
 

@@ -1,5 +1,5 @@
 Rewind Together
-Version: 1.7.1
+Version: 1.7.2
 Built:   2026-10-15
 Game:    Retro Rewind (Steam AppID 3552140)
 Engine:  Unreal Engine 5.4
@@ -12,6 +12,37 @@ Unreal refuses mismatched builds.
 
 Check with:  rt.status   in the game's console (press ~ twice,
 type it, press Enter), or the launcher's Play tab.
+
+
+CHANGES IN 1.7.2  -  a mod browser for Nexus Mods in the
+                     launcher.
+------------------------------------------------------
+  * NEW: Mods tab > NEXUS MODS lists Retro Rewind's mods on
+    Nexus Mods, with search, sorting and pictures. Adult mods
+    stay hidden unless you switch them on.
+
+  * NEW: Download. It opens the mod's download page on Nexus,
+    where it's one click (a free Nexus account is enough).
+    The launcher notices the file in your Downloads folder
+    and installs it, backing up your saves first. Mods you
+    got this way show INSTALLED or UPDATE AVAILABLE.
+
+  * NEW: .7z and .rar mods install too, not just .zip and
+    .pak (unpacked with the tar.exe that comes with Windows).
+
+  * NEW: "Get their mods". When a host's mods differ from
+    yours and they got them through the launcher, the friend
+    list and the "Join anyway?" question offer to show you
+    exactly those mods, ready to download.
+
+  * FIXED: a launcher older than this one could forget which
+    Nexus mod an install was. It now gets that back from the
+    install's name, and no longer drops details a newer
+    launcher wrote.
+
+  * The mod itself is the same as in 1.7.1 apart from its
+    version number. Host and guests still need the same
+    version.
 
 
 CHANGES IN 1.7.1  -  the launcher updates itself, checks

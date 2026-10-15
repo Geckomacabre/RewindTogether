@@ -21,16 +21,22 @@ public sealed record ModSet(int Count, string Hash, IReadOnlyList<string> Names)
 /// The mods UE4SS ships with, and Rewind Together itself, are left out.
 ///
 /// Nothing is downloaded. Other people's mods are theirs to share, so the launcher only names
-/// what differs and the player gets the same files from wherever the host got them.
+/// what differs and the player gets the same files from wherever the host got them. When the
+/// host's launcher installed a mod from Nexus Mods it knows the mod's Nexus id, and publishes
+/// those ids too (rt_nexus), so a guest's launcher can show exactly those mods to get.
 /// </summary>
-public sealed record ModFingerprint(string RtVersion, ModSet Content, ModSet Scripts)
+public sealed record ModFingerprint(string RtVersion, ModSet Content, ModSet Scripts, IReadOnlyList<int>? Nexus = null)
 {
     public const string KeyVersion = "rt_ver";
     public const string KeyContent = "rt_cmods";
     public const string KeyContentNames = "rt_cnames";
     public const string KeyScripts = "rt_smods";
     public const string KeyScriptNames = "rt_snames";
-    public static readonly string[] PresenceKeys = { KeyVersion, KeyContent, KeyContentNames, KeyScripts, KeyScriptNames };
+    public const string KeyNexus = "rt_nexus";
+    public static readonly string[] PresenceKeys = { KeyVersion, KeyContent, KeyContentNames, KeyScripts, KeyScriptNames, KeyNexus };
+
+    /// <summary>Nexus Mods ids of the enabled mods that came from there, ascending.</summary>
+    public IReadOnlyList<int> NexusIds => Nexus ?? Array.Empty<int>();
 
     /// <summary>Steam's limit for one rich presence value (k_cchMaxRichPresenceValueLength - 1).</summary>
     public const int MaxValueLength = 255;
@@ -49,9 +55,14 @@ public sealed record ModFingerprint(string RtVersion, ModSet Content, ModSet Scr
                         !m.Name.Equals(GameInstall.RewindTogetherFolder, StringComparison.OrdinalIgnoreCase))
             .Select(m => (m.Name, Key: m.Name.ToLowerInvariant()))
             .ToList();
+        var nexus = mods
+            .Where(m => m.Enabled && !m.BuiltIn && m.NexusModId is > 0 &&
+                        !m.Name.Equals(GameInstall.RewindTogetherFolder, StringComparison.OrdinalIgnoreCase))
+            .Select(m => m.NexusModId!.Value).Distinct().OrderBy(i => i).ToList();
         return new ModFingerprint(rtVersion?.Trim() ?? "",
             new ModSet(content.Count, Hashes.Of(content.Select(c => c.Key)), Sorted(content.Select(c => c.Name))),
-            new ModSet(scripts.Count, Hashes.Of(scripts.Select(s => s.Key)), Sorted(scripts.Select(s => s.Name))));
+            new ModSet(scripts.Count, Hashes.Of(scripts.Select(s => s.Key)), Sorted(scripts.Select(s => s.Name))),
+            nexus);
     }
 
     /// <summary>The rich presence values the host sets. Every value fits Steam's limit.</summary>
@@ -62,6 +73,7 @@ public sealed record ModFingerprint(string RtVersion, ModSet Content, ModSet Scr
         [KeyContentNames] = JoinNames(Content.Names),
         [KeyScripts] = $"{Scripts.Count}:{Scripts.Hash}",
         [KeyScriptNames] = JoinNames(Scripts.Names),
+        [KeyNexus] = JoinNames(NexusIds.Select(i => i.ToString(System.Globalization.CultureInfo.InvariantCulture)).ToList(), ','),
     };
 
     /// <summary>
@@ -72,9 +84,13 @@ public sealed record ModFingerprint(string RtVersion, ModSet Content, ModSet Scr
     {
         string version = (get(KeyVersion) ?? "").Trim();
         if (version.Length == 0) return null;
+        var nexus = (get(KeyNexus) ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(s => int.TryParse(s, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int i) ? i : 0)
+            .Where(i => i > 0).Distinct().OrderBy(i => i).ToList();
         return new ModFingerprint(version,
             ReadSet(get(KeyContent), get(KeyContentNames)),
-            ReadSet(get(KeyScripts), get(KeyScriptNames)));
+            ReadSet(get(KeyScripts), get(KeyScriptNames)),
+            nexus);
     }
 
     private static ModSet ReadSet(string? countAndHash, string? names)
@@ -86,15 +102,15 @@ public sealed record ModFingerprint(string RtVersion, ModSet Content, ModSet Scr
     }
 
     /// <summary>As many names as fit, in order; the count says how many there really are.</summary>
-    private static string JoinNames(IReadOnlyList<string> names)
+    private static string JoinNames(IReadOnlyList<string> names, char separator = NameSeparator)
     {
         var sb = new StringBuilder();
         foreach (string raw in names)
         {
-            string n = raw.Replace(NameSeparator, '/');
+            string n = raw.Replace(separator, '/');
             int extra = (sb.Length > 0 ? 1 : 0) + n.Length;
             if (sb.Length + extra > MaxValueLength) break;
-            if (sb.Length > 0) sb.Append(NameSeparator);
+            if (sb.Length > 0) sb.Append(separator);
             sb.Append(n);
         }
         return sb.ToString();
@@ -130,6 +146,10 @@ public sealed record ModMismatch(
     public bool VersionDiffers => VersionCompare.Compare(GuestVersion, HostVersion) != 0;
     public bool Any => VersionDiffers || ContentDiffers || ScriptsDiffer;
 
+    /// <summary>Nexus Mods ids of mods the host has that this PC did not install from Nexus: the "Get their mods" list.</summary>
+    public IReadOnlyList<int> NexusHostOnly { get; init; } = Array.Empty<int>();
+    public bool CanGetHostMods => (ContentDiffers || ScriptsDiffer) && NexusHostOnly.Count > 0;
+
     /// <summary>bad: the session will not work properly. warn: things may be missing. info: usually fine.</summary>
     public string Tone => VersionDiffers ? "bad" : ContentDiffers ? "warn" : ScriptsDiffer ? "info" : "ok";
 
@@ -156,7 +176,10 @@ public sealed record ModMismatch(
             host.Scripts.Names.Where(n => !guestScripts.Contains(n)).ToList(),
             guest.Scripts.Names.Where(n => !hostScripts.Contains(n)).ToList(),
             guest.Scripts.Count != host.Scripts.Count || guest.Scripts.Hash != host.Scripts.Hash,
-            !host.Scripts.NamesComplete);
+            !host.Scripts.NamesComplete)
+        {
+            NexusHostOnly = host.NexusIds.Except(guest.NexusIds).ToList(),
+        };
     }
 
     /// <summary>The full explanation for the "Join anyway?" dialog.</summary>
@@ -184,7 +207,11 @@ public sealed record ModMismatch(
         {
             sb.AppendLine("Script mods (UE4SS) run on each PC separately, so this is usually fine:");
             AppendDiff(sb, hostName, ScriptsHostOnly, ScriptsGuestOnly, HostScriptListCut);
+            sb.AppendLine();
         }
+        if (CanGetHostMods)
+            sb.AppendLine($"{hostName} got {(NexusHostOnly.Count == 1 ? "one of these" : $"{NexusHostOnly.Count} of these")} from Nexus Mods. " +
+                          "\"Get their mods\" shows them in the Mods tab, ready to download.");
         return sb.ToString().TrimEnd();
     }
 

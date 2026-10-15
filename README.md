@@ -67,10 +67,19 @@ Verified in game, on both screens:
 
 **Only the host saves.** Guests' own saves are never read or written.
 
-**Other mods.** Rewind Together doesn't share or download mods. Before you join, the launcher
-compares your mods with the host's and tells you what differs: the Rewind Together version
-(must match), content mods such as `.pak` and Blueprint mods (should match, or things go
-missing), and UE4SS script mods (usually fine). You can still choose "Join anyway".
+**More mods, from Nexus Mods.** The launcher's Mods tab has a **NEXUS MODS** side that lists
+Retro Rewind's mods on Nexus Mods, with search, sorting and pictures. Adult mods stay hidden
+unless you switch them on. Press **Download**: the mod's download page opens on Nexus, where
+it's one click (a free Nexus account is enough). The launcher picks the file up from your
+Downloads folder and installs it, backing up your saves first. `.zip`, `.7z` and `.rar` all
+work. Installed mods show **INSTALLED** or **UPDATE AVAILABLE**.
+
+**Other mods in co-op.** Rewind Together doesn't share mods between players. Before you join,
+the launcher compares your mods with the host's and tells you what differs: the Rewind
+Together version (must match), content mods such as `.pak` and Blueprint mods (should match,
+or things go missing), and UE4SS script mods (usually fine). When the host got theirs through
+the launcher's Nexus side, **Get their mods** lists exactly those, ready to download. You can
+still choose "Join anyway".
 
 **Discord.** While the game runs, your Discord profile says **Playing Rewind Together** and what
 you're doing: hosting a video store, visiting a friend's store, running the store solo, or in
@@ -116,7 +125,7 @@ console window takes them too, if you have turned it on. A fresh install doesn't
 
 ---
 
-## Known limitations (1.7.1)
+## Known limitations (1.7.2)
 
 - **A guest's own game also runs each click locally.** You may occasionally see an object
   jump for a moment before the host's version arrives. The host's version always wins.

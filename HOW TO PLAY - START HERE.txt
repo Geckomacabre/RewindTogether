@@ -1,5 +1,5 @@
 =============================================================
-  REWIND TOGETHER  -  play Retro Rewind together   (v1.7.1)
+  REWIND TOGETHER  -  play Retro Rewind together   (v1.7.2)
   The simple guide. Read your part: HOST or GUEST.
 =============================================================
 
@@ -105,6 +105,20 @@ PLAYING TOGETHER
   DIAGNOSTICS, switch off "Show 'Playing Rewind Together'".
 
 
+GETTING MORE MODS (optional)
+----------------------------
+
+  1. In the launcher: MODS, then NEXUS MODS.
+  2. Find a mod and press Download.
+  3. Its page opens on Nexus Mods. Click the download button
+     there (with a free Nexus account: "Slow download").
+  4. Done. The launcher notices the file in your Downloads
+     folder and installs it by itself.
+
+  If you play together, the host and every guest should have
+  the same content mods.
+
+
 IF IT DOES NOT WORK
 -------------------
 
@@ -133,6 +147,8 @@ IF IT DOES NOT WORK
       Otherwise some things may be missing from the store.
     - Different script mods: usually fine, they run on each
       PC separately.
+    If the host got their mods through the launcher, press
+    "Get their mods": it lists exactly those, with Download.
     "Join anyway" still works if you want to try.
 
   Steam updated the game for only one of you

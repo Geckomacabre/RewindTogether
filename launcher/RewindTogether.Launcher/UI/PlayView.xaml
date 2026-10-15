@@ -209,6 +209,9 @@
                                                 <TextBlock Text="{Binding StateText}" Foreground="{StaticResource GreenBrush}" FontSize="12.5" />
                                                 <TextBlock Text="{Binding ModsText}" Foreground="{Binding ModsTone, Converter={StaticResource Tone}}" FontSize="12.5"
                                                            TextWrapping="Wrap" Visibility="{Binding ModsVisible, Converter={StaticResource Vis}}" />
+                                                <Button Style="{StaticResource SmallGhostButton}" Content="Get their mods" HorizontalAlignment="Left" Margin="0,6,0,0"
+                                                        Command="{Binding GetModsCommand}" CommandParameter="{Binding}" Visibility="{Binding GetModsVisible, Converter={StaticResource Vis}}"
+                                                        ToolTip="Show the mods this host got from Nexus Mods, ready to download" />
                                             </StackPanel>
                                         </DockPanel>
                                     </Border>

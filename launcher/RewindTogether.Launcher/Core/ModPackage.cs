@@ -86,14 +86,88 @@ public sealed class PackageSource : IDisposable
         }
 
         if (ext is ".7z" or ".rar")
-            throw new ModInstallException(
-                $"This is a {ext} archive, which Windows cannot open by itself. Extract it with 7-Zip " +
-                "(free, 7-zip.org), then use \"Add mod from folder\" and pick the extracted folder.");
+        {
+            string unpacked = Unpack(path, ext);
+            var files = Directory.EnumerateFiles(unpacked, "*", SearchOption.AllDirectories)
+                .Select(f => new PackageFile(
+                    System.IO.Path.GetRelativePath(unpacked, f).Replace('\\', '/'),
+                    new FileInfo(f).Length,
+                    () => new FileStream(f, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)))
+                .ToList();
+            return new PackageSource(path, System.IO.Path.GetFileNameWithoutExtension(path), files, new TempFolder(unpacked));
+        }
 
-        throw new ModInstallException("Choose a .zip file, a .pak file, or a folder.");
+        throw new ModInstallException("Choose a .zip, .7z or .rar file, a .pak file, or a folder.");
+    }
+
+    /// <summary>
+    /// .7z and .rar: unpacked into a temporary folder by the tar.exe that comes with Windows 10
+    /// (1803+) and 11 (libarchive, which reads both). It refuses absolute paths and "..", so an
+    /// archive cannot write outside the folder.
+    /// </summary>
+    private static string Unpack(string archive, string ext)
+    {
+        string advice = $"Extract it with 7-Zip (free, 7-zip.org), then use \"From folder...\" and pick the extracted folder.";
+        string tar = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "tar.exe");
+        if (!File.Exists(tar))
+            throw new ModInstallException($"This is a {ext} archive, and this copy of Windows has no tar.exe to open it. {advice}");
+        string dest = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "RewindTogether-unpack-" + Guid.NewGuid().ToString("N")[..12]);
+        Directory.CreateDirectory(dest);
+        var psi = new System.Diagnostics.ProcessStartInfo(tar)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+        };
+        psi.ArgumentList.Add("-xf");
+        psi.ArgumentList.Add(System.IO.Path.GetFullPath(archive));
+        psi.ArgumentList.Add("-C");
+        psi.ArgumentList.Add(dest);
+        string error;
+        int code;
+        try
+        {
+            using var p = System.Diagnostics.Process.Start(psi) ?? throw new IOException("tar.exe did not start.");
+            var err = p.StandardError.ReadToEndAsync();
+            _ = p.StandardOutput.ReadToEndAsync();
+            if (!p.WaitForExit((int)TimeSpan.FromMinutes(15).TotalMilliseconds))
+            {
+                try { p.Kill(); } catch { }
+                throw new IOException("unpacking took longer than 15 minutes");
+            }
+            code = p.ExitCode;
+            error = err.Result.Trim();
+        }
+        catch (Exception ex) when (ex is IOException or System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            TempFolder.Delete(dest);
+            throw new ModInstallException($"This {ext} archive could not be opened ({ex.Message}). {advice}", ex);
+        }
+        if (code != 0 || !Directory.EnumerateFiles(dest, "*", SearchOption.AllDirectories).Any())
+        {
+            TempFolder.Delete(dest);
+            Log.Warn($"tar.exe could not unpack {archive} (exit {code}): {error}");
+            throw new ModInstallException($"This {ext} archive could not be opened (it may be damaged, only partly downloaded, or use a format Windows cannot read). {advice}");
+        }
+        return dest;
     }
 
     public void Dispose() => _owner?.Dispose();
+
+    /// <summary>Deletes an unpacked archive's temporary folder when the package is closed.</summary>
+    private sealed class TempFolder : IDisposable
+    {
+        private readonly string _path;
+        public TempFolder(string path) => _path = path;
+        public void Dispose() => Delete(_path);
+
+        public static void Delete(string path)
+        {
+            try { if (Directory.Exists(path)) Directory.Delete(path, recursive: true); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Log.Warn($"Could not delete {path}: {ex.Message}"); }
+        }
+    }
 }
 
 /// <summary>A plain-English install problem. <see cref="GameFilesLockedException"/> is the "close the game" case.</summary>

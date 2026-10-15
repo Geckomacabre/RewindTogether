@@ -3,7 +3,8 @@ using System.Text.RegularExpressions;
 namespace RewindTogether.Launcher.Core;
 
 /// <summary>Who a package is, once installed.</summary>
-public sealed record ModIdentity(string Id, string Name, string Version, string Source, string? Sha256 = null);
+public sealed record ModIdentity(string Id, string Name, string Version, string Source, string? Sha256 = null,
+    int? NexusModId = null, string? NexusVersion = null);
 
 public sealed class InstallOptions
 {
@@ -38,6 +39,8 @@ public sealed class GameModInfo
     public bool BuiltIn { get; init; }
     /// <summary>The launcher's id for it, if the launcher installed it.</summary>
     public string? ManagedId { get; init; }
+    /// <summary>Its id on Nexus Mods, if the launcher installed it from a Nexus download.</summary>
+    public int? NexusModId { get; init; }
     /// <summary>UE4SS mods: the folder. Paks: the .pak file (full path, current location).</summary>
     public string Path { get; init; } = "";
     public bool HasEntryPoint { get; init; } = true;
@@ -140,6 +143,8 @@ public sealed class ModManager
             GameRoot = _game.Root,
             InstalledAt = DateTime.UtcNow,
             Enabled = true,
+            NexusModId = who.NexusModId,
+            NexusVersion = who.NexusVersion,
         };
 
         foreach (var comp in pkg.Components)
@@ -373,13 +378,15 @@ public sealed class ModManager
                 if (name.Equals("shared", StringComparison.OrdinalIgnoreCase)) continue;
                 bool enabled = txt.IsEnabled(name) ?? File.Exists(Path.Combine(dir, "enabled.txt"));
                 bool hasEntry = File.Exists(Path.Combine(dir, "Scripts", "main.lua")) || File.Exists(Path.Combine(dir, "dlls", "main.dll"));
+                var owner = managed.FirstOrDefault(m => m.LuaFolders.Contains(name, StringComparer.OrdinalIgnoreCase));
                 list.Add(new GameModInfo
                 {
                     Name = name,
                     Kind = ModKind.Ue4ssLua,
                     Enabled = enabled,
                     BuiltIn = BuiltInUe4ssMods.Contains(name),
-                    ManagedId = managed.FirstOrDefault(m => m.LuaFolders.Contains(name, StringComparer.OrdinalIgnoreCase))?.Id,
+                    ManagedId = owner?.Id,
+                    NexusModId = owner?.NexusModId,
                     Path = dir,
                     HasEntryPoint = hasEntry,
                 });
@@ -392,12 +399,14 @@ public sealed class ModManager
             foreach (string pak in Directory.EnumerateFiles(dir, "*.pak", SearchOption.AllDirectories).OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
             {
                 string rel = ToRel(_game.ToRelative(enabled ? pak : EnabledPathFor(pak)));
+                var owner = managed.FirstOrDefault(m => m.Files.Contains(rel, StringComparer.OrdinalIgnoreCase));
                 list.Add(new GameModInfo
                 {
                     Name = Path.GetFileNameWithoutExtension(pak),
                     Kind = kind,
                     Enabled = enabled,
-                    ManagedId = managed.FirstOrDefault(m => m.Files.Contains(rel, StringComparer.OrdinalIgnoreCase))?.Id,
+                    ManagedId = owner?.Id,
+                    NexusModId = owner?.NexusModId,
                     Path = pak,
                 });
             }

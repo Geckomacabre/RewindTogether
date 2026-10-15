@@ -8,6 +8,7 @@ namespace RewindTogether.Launcher.Core;
 ///   --host               open your store to friends
 ///   --game-dir &lt;path&gt;    use this Retro Rewind install (testing / unusual installs)
 ///   --data-dir &lt;path&gt;    keep settings and logs here instead of %APPDATA%\RewindTogether
+///   --downloads-dir &lt;path&gt;   watch this folder for Nexus downloads instead of the Downloads folder (testing)
 ///   --tab play|mods|diagnostics   start on a tab
 ///   --steam-agent        internal: run headless as the Steam helper process (see SteamAgent)
 ///   --after-update &lt;pid&gt; --updated-from &lt;version&gt;   internal: started by the self-update
@@ -19,6 +20,7 @@ public sealed class LaunchArgs
     public ulong? JoinSteamId { get; private set; }
     public string? GameDir { get; private set; }
     public string? DataDir { get; private set; }
+    public string? DownloadsDir { get; private set; }
     public string? Tab { get; private set; }
     public bool SteamAgent { get; private set; }
     public string? SteamDll { get; private set; }
@@ -50,6 +52,7 @@ public sealed class LaunchArgs
                 }
                 case "--game-dir": a.GameDir = Next(); break;
                 case "--data-dir": a.DataDir = Next(); break;
+                case "--downloads-dir": a.DownloadsDir = Next(); break;
                 case "--tab": a.Tab = Next()?.ToLowerInvariant(); break;
                 case "--steam-agent": a.SteamAgent = true; break;
                 case "--steam-dll": a.SteamDll = Next(); break;
@@ -79,6 +82,7 @@ public sealed class LaunchArgs
         var list = new List<string>();
         if (!string.IsNullOrWhiteSpace(DataDir)) { list.Add("--data-dir"); list.Add(DataDir); }
         if (!string.IsNullOrWhiteSpace(GameDir)) { list.Add("--game-dir"); list.Add(GameDir); }
+        if (!string.IsNullOrWhiteSpace(DownloadsDir)) { list.Add("--downloads-dir"); list.Add(DownloadsDir); }
         return list.ToArray();
     }
 

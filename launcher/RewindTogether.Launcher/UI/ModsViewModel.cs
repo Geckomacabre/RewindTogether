@@ -129,6 +129,7 @@ public sealed class ModsViewModel : ObservableObject
     public ModsViewModel(MainViewModel main)
     {
         _main = main;
+        Browse = new NexusBrowseViewModel(main);
         InstallCommand = new AsyncCommand(p => p is CatalogItem c ? _main.InstallFromCatalogAsync(c.Entry) : Task.CompletedTask);
         UninstallCatalogCommand = new AsyncCommand(p => p is CatalogItem c ? UninstallAsync(c.Entry.Id, c.Name) : Task.CompletedTask);
         UninstallGameModCommand = new AsyncCommand(p => p is GameModItem g && g.Info.ManagedId != null ? UninstallAsync(g.Info.ManagedId, g.Name) : Task.CompletedTask);
@@ -136,7 +137,12 @@ public sealed class ModsViewModel : ObservableObject
         RevealCommand = new RelayCommand(p => { if (p is GameModItem g) Try(() => GameProcess.RevealInExplorer(g.Info.Path)); });
         AddFileCommand = new AsyncCommand(async () => { if (_main.PickModFile() is { } f) await _main.InstallPackageAsync(f, null, "file"); });
         AddFolderCommand = new AsyncCommand(async () => { if (_main.PickModFolder() is { } f) await _main.InstallPackageAsync(f, null, "folder"); });
-        RefreshCommand = new AsyncCommand(async () => { await LoadCatalogAsync(); _main.RefreshInstallState(); });
+        RefreshCommand = new AsyncCommand(async () =>
+        {
+            if (ShowNexus) await Browse.ReloadAsync();
+            else await LoadCatalogAsync();
+            _main.RefreshInstallState();
+        });
         OpenModsFolderCommand = new RelayCommand(() => { if (_main.Game != null) Try(() => GameProcess.RevealInExplorer(_main.Game.Ue4ssModsDir)); });
     }
 
@@ -144,13 +150,56 @@ public sealed class ModsViewModel : ObservableObject
     public ObservableCollection<CatalogItem> Items { get; } = new();
     public ObservableCollection<GameModItem> GameMods { get; } = new();
 
-    public string Search
+    /// <summary>The left card's other side: Retro Rewind's mods on Nexus Mods.</summary>
+    public NexusBrowseViewModel Browse { get; }
+
+    private bool _showNexus;
+
+    /// <summary>The left card shows Nexus Mods (true) or the launcher's own shelf (false).</summary>
+    public bool ShowNexus
     {
-        get => _search;
-        set { if (Set(ref _search, value)) ApplyFilter(); }
+        get => _showNexus;
+        set
+        {
+            if (!Set(ref _showNexus, value)) return;
+            Raise(nameof(ShowShelf));
+            Raise(nameof(Search));
+            Raise(nameof(SearchHint));
+            Raise(nameof(HeaderStatus));
+            if (value) Browse.EnsureLoaded();
+        }
     }
 
-    public string CatalogStatus { get => _catalogStatus; private set => Set(ref _catalogStatus, value); }
+    public bool ShowShelf { get => !_showNexus; set => ShowNexus = !value; }
+
+    /// <summary>Opens the Nexus side with just the mods a co-op host uses.</summary>
+    public async Task ShowHostModsAsync(string hostName, IReadOnlyList<int> nexusIds)
+    {
+        _main.Tab = "mods";
+        _showNexus = true;
+        Raise(nameof(ShowNexus));
+        Raise(nameof(ShowShelf));
+        Raise(nameof(Search));
+        Raise(nameof(SearchHint));
+        Raise(nameof(HeaderStatus));
+        await Browse.ShowHostModsAsync(hostName, nexusIds);
+    }
+
+    public string Search
+    {
+        get => _showNexus ? Browse.SearchText : _search;
+        set
+        {
+            if (_showNexus) { Browse.SearchText = value; Raise(); return; }
+            if (Set(ref _search, value)) ApplyFilter();
+        }
+    }
+
+    public string SearchHint => _showNexus ? "Search Nexus Mods..." : "Search mods...";
+
+    public string CatalogStatus { get => _catalogStatus; private set { if (Set(ref _catalogStatus, value)) Raise(nameof(HeaderStatus)); } }
+    /// <summary>The line under the tab's title: which list the left card shows.</summary>
+    public string HeaderStatus => _showNexus ? "Retro Rewind's mods on Nexus Mods" : _catalogStatus;
     public bool Loading { get => _loading; private set => Set(ref _loading, value); }
     public string GameModsSummary => _main.Game == null ? "Retro Rewind not found." :
         $"{Plural(GameMods.Count(m => m.Info.Kind == ModKind.Ue4ssLua), "UE4SS mod")}, {Plural(GameMods.Count(m => m.Info.Kind != ModKind.Ue4ssLua), "pak mod")}. " +
@@ -258,6 +307,7 @@ public sealed class ModsViewModel : ObservableObject
             }
         }
         Raise(nameof(GameModsSummary));
+        Browse.RefreshInstalled();
     }
 
     private void ApplyFilter()

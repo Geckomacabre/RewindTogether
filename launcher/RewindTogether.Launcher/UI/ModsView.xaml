@@ -16,15 +16,15 @@
             </Grid.ColumnDefinitions>
             <StackPanel VerticalAlignment="Center">
                 <TextBlock Text="THE MOD SHELF" Style="{StaticResource H1}" />
-                <TextBlock Text="{Binding CatalogStatus}" Style="{StaticResource Eyebrow}" Margin="0,3,0,0" />
+                <TextBlock Text="{Binding HeaderStatus}" Style="{StaticResource Eyebrow}" Margin="0,3,0,0" />
             </StackPanel>
             <TextBox Grid.Column="1" Margin="28,0,18,0" MaxWidth="380" HorizontalAlignment="Stretch" VerticalAlignment="Center"
-                     Text="{Binding Search, UpdateSourceTrigger=PropertyChanged}" Tag="Search mods..." AutomationProperties.Name="Search mods" />
+                     Text="{Binding Search, UpdateSourceTrigger=PropertyChanged}" Tag="{Binding SearchHint}" AutomationProperties.Name="Search mods" />
             <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                 <Button Style="{StaticResource PinkButton}" Content="＋  Add mod from file..." Command="{Binding AddFileCommand}" Margin="0,0,8,0"
-                        ToolTip="A .zip or .pak you downloaded, for example from Nexus Mods. The launcher works out where it goes." />
+                        ToolTip="A .zip, .7z, .rar or .pak you downloaded, for example from Nexus Mods. The launcher works out where it goes." />
                 <Button Style="{StaticResource GhostButton}" Content="From folder..." Command="{Binding AddFolderCommand}" Margin="0,0,8,0"
-                        ToolTip="An unpacked mod folder (for .7z/.rar downloads: extract them first)" />
+                        ToolTip="An unpacked mod folder" />
                 <Button Style="{StaticResource GhostButton}" Content="⟳" Command="{Binding RefreshCommand}" ToolTip="Reload the mod list and re-scan the game" />
             </StackPanel>
         </Grid>
@@ -36,11 +36,122 @@
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
-            <!-- ============================================================ catalog -->
+            <!-- ============================================================ catalog / Nexus Mods -->
             <Border Style="{StaticResource Card}" Padding="18">
                 <DockPanel>
-                    <TextBlock DockPanel.Dock="Top" Text="NEW RELEASES" Style="{StaticResource Eyebrow}" Foreground="{StaticResource PinkBrush}" Margin="0,0,0,10" />
-                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,12">
+                        <RadioButton Style="{StaticResource SubTab}" GroupName="ModsSide" Content="NEW RELEASES" IsChecked="{Binding ShowShelf}"
+                                     ToolTip="Rewind Together and the mods that come with the launcher" />
+                        <RadioButton Style="{StaticResource SubTab}" GroupName="ModsSide" Content="NEXUS MODS" IsChecked="{Binding ShowNexus}"
+                                     ToolTip="Browse Retro Rewind's mods on Nexus Mods" AutomationProperties.Name="Nexus Mods" />
+                    </StackPanel>
+
+                    <Grid>
+                    <!-- ........................................................ Nexus Mods -->
+                    <DockPanel DataContext="{Binding Browse}" Visibility="{Binding DataContext.ShowNexus, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource Vis}}">
+                        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                            <Button DockPanel.Dock="Right" Style="{StaticResource SmallGhostButton}" Content="Nexus page" Command="{Binding OpenNexusCommand}"
+                                    ToolTip="Open Retro Rewind's page on Nexus Mods in your browser" />
+                            <StackPanel Orientation="Horizontal">
+                                <ComboBox ItemsSource="{Binding Sorts}" SelectedItem="{Binding SelectedSort}" DisplayMemberPath="Label" Width="190"
+                                          AutomationProperties.Name="Sort Nexus mods" />
+                                <CheckBox Style="{StaticResource Switch}" IsChecked="{Binding ShowAdult}" Margin="16,0,0,0" VerticalAlignment="Center"
+                                          ToolTip="Mods their authors marked as adult content are hidden unless this is on">
+                                    <TextBlock Text="Show adult mods" Style="{StaticResource Body}" FontSize="13" />
+                                </CheckBox>
+                            </StackPanel>
+                        </DockPanel>
+                        <Border DockPanel.Dock="Top" Style="{StaticResource Inset}" Background="#222DE2E6" Padding="12,8" Margin="0,0,0,8"
+                                Visibility="{Binding HostFilterVisible, Converter={StaticResource Vis}}">
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" Style="{StaticResource SmallGhostButton}" Content="Show all mods" Command="{Binding ClearHostFilterCommand}" Margin="10,0,0,0" />
+                                <TextBlock Text="{Binding HostFilter}" Foreground="{StaticResource CyanBrush}" FontSize="12.5" TextWrapping="Wrap" VerticalAlignment="Center" />
+                            </DockPanel>
+                        </Border>
+                        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                            <Button DockPanel.Dock="Right" Style="{StaticResource SmallGhostButton}" Content="Try again" Command="{Binding RetryCommand}"
+                                    Visibility="{Binding Failed, Converter={StaticResource Vis}}" />
+                            <TextBlock Text="{Binding Status}" Style="{StaticResource Dim}" FontSize="12.5" TextWrapping="Wrap" VerticalAlignment="Center" />
+                        </DockPanel>
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel>
+                                <ItemsControl ItemsSource="{Binding Items}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Style="{StaticResource Inset}" Padding="12" Margin="0,0,0,10">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <!-- thumbnail, with a tape-spine placeholder until it arrives -->
+                                                    <Grid Width="150" Height="84" Margin="0,0,14,0" VerticalAlignment="Top">
+                                                        <Border CornerRadius="8" Background="{StaticResource Bg2Brush}">
+                                                            <TextBlock Text="▶▶" Foreground="{StaticResource LineBrush}" FontSize="22" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                        </Border>
+                                                        <Border CornerRadius="8" Visibility="{Binding HasThumbnail, Converter={StaticResource Vis}}">
+                                                            <Border.Background>
+                                                                <ImageBrush ImageSource="{Binding Thumbnail}" Stretch="UniformToFill" />
+                                                            </Border.Background>
+                                                        </Border>
+                                                    </Grid>
+                                                    <StackPanel Grid.Column="1">
+                                                        <WrapPanel>
+                                                            <TextBlock Text="{Binding Name}" Style="{StaticResource H2}" FontSize="15.5" Margin="0,0,10,0" TextWrapping="Wrap" />
+                                                            <Border Style="{StaticResource Badge}" Background="#33FF3EA5" Visibility="{Binding HasVersion, Converter={StaticResource Vis}}">
+                                                                <TextBlock Text="{Binding VersionText}" FontSize="11.5" FontWeight="Bold" Foreground="{StaticResource PinkBrush}" />
+                                                            </Border>
+                                                            <Border Style="{StaticResource Badge}" Visibility="{Binding HasCategory, Converter={StaticResource Vis}}">
+                                                                <TextBlock Text="{Binding Category}" FontSize="11.5" Foreground="{StaticResource TextDimBrush}" />
+                                                            </Border>
+                                                            <Border Style="{StaticResource Badge}" Background="#3343D17A" Visibility="{Binding UpToDate, Converter={StaticResource Vis}}">
+                                                                <TextBlock Text="INSTALLED" FontSize="11.5" FontWeight="Bold" Foreground="{StaticResource GreenBrush}" />
+                                                            </Border>
+                                                            <Border Style="{StaticResource Badge}" Background="#33FFD166" Visibility="{Binding UpdateAvailable, Converter={StaticResource Vis}}">
+                                                                <TextBlock Text="UPDATE AVAILABLE" FontSize="11.5" FontWeight="Bold" Foreground="{StaticResource YellowBrush}" />
+                                                            </Border>
+                                                            <Border Style="{StaticResource Badge}" Background="#33FF5470" Visibility="{Binding Adult, Converter={StaticResource Vis}}">
+                                                                <TextBlock Text="ADULT" FontSize="11.5" FontWeight="Bold" Foreground="{StaticResource RedBrush}" />
+                                                            </Border>
+                                                        </WrapPanel>
+                                                        <TextBlock Text="{Binding Author}" Foreground="{StaticResource TextFaintBrush}" FontSize="12.5" Margin="0,2,0,0" />
+                                                        <TextBlock Style="{StaticResource Dim}" Text="{Binding Summary}" Margin="0,6,0,8" FontSize="13" LineHeight="18"
+                                                                   TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="54" />
+                                                        <DockPanel>
+                                                            <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
+                                                                <Button Style="{StaticResource PinkButton}" Content="{Binding PrimaryText}" Padding="14,6" FontSize="12.5" Margin="0,0,8,0"
+                                                                        IsEnabled="{Binding CanGet}"
+                                                                        Command="{Binding DataContext.GetCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}"
+                                                                        ToolTip="Opens this mod's download on Nexus Mods: one click there (a free Nexus account is enough), then the launcher installs it by itself." />
+                                                                <Button Style="{StaticResource SmallGhostButton}" Content="Stop waiting" Margin="0,0,8,0"
+                                                                        Visibility="{Binding Waiting, Converter={StaticResource Vis}}"
+                                                                        Command="{Binding DataContext.StopWaitingCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}" />
+                                                                <Button Style="{StaticResource SmallGhostButton}" Content="Mod page" Margin="0,0,8,0"
+                                                                        Command="{Binding DataContext.OpenPageCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}" />
+                                                            </StackPanel>
+                                                            <TextBlock Text="{Binding StatsText}" FontSize="12" Foreground="{StaticResource TextFaintBrush}" VerticalAlignment="Center"
+                                                                       HorizontalAlignment="Right" TextTrimming="CharacterEllipsis" />
+                                                        </DockPanel>
+                                                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0" Visibility="{Binding HasState, Converter={StaticResource Vis}}">
+                                                            <Ellipse Width="8" Height="8" Fill="{Binding StateTone, Converter={StaticResource Tone}}" Margin="0,0,8,0" VerticalAlignment="Center" />
+                                                            <TextBlock Text="{Binding StateText}" FontSize="12.5" Foreground="{StaticResource TextDimBrush}" TextWrapping="Wrap" />
+                                                        </StackPanel>
+                                                    </StackPanel>
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <Button Style="{StaticResource GhostButton}" Content="Load more" Command="{Binding LoadMoreCommand}" HorizontalAlignment="Center" Margin="0,2,0,10"
+                                        Visibility="{Binding CanLoadMore, Converter={StaticResource Vis}}" />
+                                <TextBlock Style="{StaticResource Dim}" FontSize="12" Margin="2,4,2,0" LineHeight="17" TextWrapping="Wrap" Foreground="{StaticResource TextFaintBrush}"
+                                           Text="Mods are made and shared by their authors on Nexus Mods. Nexus only allows downloads through its own site (a free account is enough), so Download opens the file's page there for one click; the launcher then installs it from your Downloads folder and backs up your saves first." />
+                            </StackPanel>
+                        </ScrollViewer>
+                    </DockPanel>
+
+                    <!-- ........................................................ the launcher's own shelf -->
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" Visibility="{Binding ShowShelf, Converter={StaticResource Vis}}">
                         <StackPanel>
                             <ItemsControl ItemsSource="{Binding Items}">
                                 <ItemsControl.ItemTemplate>
@@ -92,13 +203,14 @@
                             </ItemsControl>
                             <Border Style="{StaticResource Inset}" Background="Transparent" BorderBrush="{StaticResource LineBrush}" BorderThickness="1.5" Padding="16,12" Margin="0,4,0,0">
                                 <StackPanel>
-                                    <TextBlock Text="GOT A MOD FROM NEXUS?" Style="{StaticResource Eyebrow}" Foreground="{StaticResource CyanBrush}" />
-                                    <TextBlock Style="{StaticResource Dim}" FontSize="13" Margin="0,4,0,0" LineHeight="18"
-                                               Text="Use “Add mod from file” and pick the .zip or .pak you downloaded. The launcher reads what is inside and puts it in the right place: UE4SS script mods go to ue4ss\Mods, content mods to Paks\~mods, Blueprint mods to Paks\LogicMods. Your saves are backed up first." />
+                                    <TextBlock Text="LOOKING FOR MORE MODS?" Style="{StaticResource Eyebrow}" Foreground="{StaticResource CyanBrush}" />
+                                    <TextBlock Style="{StaticResource Dim}" FontSize="13" Margin="0,4,0,0" LineHeight="18" TextWrapping="Wrap"
+                                               Text="Open NEXUS MODS above to browse Retro Rewind's mods; they install by themselves once downloaded. Got a file already? Use “Add mod from file” and pick the .zip, .7z, .rar or .pak. The launcher reads what is inside and puts it in the right place: UE4SS script mods go to ue4ss\Mods, content mods to Paks\~mods, Blueprint mods to Paks\LogicMods. Your saves are backed up first." />
                                 </StackPanel>
                             </Border>
                         </StackPanel>
                     </ScrollViewer>
+                    </Grid>
                 </DockPanel>
             </Border>
 

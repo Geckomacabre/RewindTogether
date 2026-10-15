@@ -250,6 +250,48 @@ with **Check now**), `UpdateRepo`, `UpdateApiBase`. Plain http is accepted only 
 the tests. End to end, measured with the published exe and a stand-in GitHub on 127.0.0.1:
 banner, Update, restart with its folders kept, mod 9.9.9 in the (fake) game, about 14 seconds.
 
+**Nexus Mods browser** (`Core\Nexus.cs`, `Core\NexusDownloads.cs`, `UI\NexusBrowseViewModel.cs`).
+The Mods tab's left card has two sides: NEW RELEASES (the catalog) and NEXUS MODS. The second
+reads Nexus Mods' public GraphQL API (`api.nexusmods.com/v2/graphql`, game
+`retrorewindvideostoresimulator`, id 8977). No account or key is needed for this, and every
+request sends `Application-Name: Rewind Together` and `Application-Version`, as Nexus's API
+policy asks.
+- **Browsing.** `mods` with `gameDomainName`, `nameStemmed MATCHES` for the search box (450 ms
+  debounce), `adultContent: false` unless "Show adult mods" is on (`NexusShowAdult`, off by
+  default), sorts by downloads/updated/endorsements/newest (`NexusSort`), 20 a page. Only
+  `published` mods are shown. Thumbnails come from Nexus's CDN, https only, four at a time,
+  cached in `<data>\thumbnails`.
+- **Downloading.** Nexus lets a third-party app fetch a file for a player only with that
+  player's account: a free account through the site's "Mod Manager Download" (`nxm://`),
+  Premium through the API. Both need a sign-in that public apps get only once Nexus registers
+  them. So **Download** reads the mod's files (`modFiles`) and opens the main file's download
+  page (`?tab=files&file_id=N`). With several main files, it opens the Files tab. Signing in
+  there returns to that page. `NexusDownloadWatcher` then waits up to two hours for the file in
+  the Downloads folder (`SHGetKnownFolderPath`; `--downloads-dir` for tests). A file counts when:
+  - its name is one of the mod's file names, or the browser's " (1)" copy of one, or follows
+    `Name-<modId>-<version>-<unix time>.ext`;
+  - it is newer than the click;
+  - it is not empty, has kept the same size for two polls, and no program is writing to it.
+
+  It is then installed through the normal installer as `nexus-<modId>`, keeping an earlier
+  install's record when the folder or pak is the same.
+- **Recording.** The record in `installed.json` carries `nexusModId` and `nexusVersion`, which
+  drive the INSTALLED / UPDATE AVAILABLE badges. A manifest saved by an older launcher loses
+  those fields; `Load` restores them from the `nexus-<id>` record id. Unknown fields now
+  survive a save (`JsonExtensionData`).
+- **Add mod from file.** A file named like a Nexus download is looked up by MD5 (`fileHash`)
+  and recorded the same way.
+- **Archives.** `.7z` and `.rar` are unpacked with Windows' own `tar.exe` (libarchive) into a
+  temporary folder, which is deleted afterwards.
+- **Co-op.** The host also publishes `rt_nexus`, the Nexus ids of its enabled mods. A guest
+  whose mods differ gets **Get their mods** in the friend row and in the "Join anyway?"
+  dialog. It opens the NEXUS MODS side with just those mods (`legacyModsByDomain`).
+- **Checked live (October 2026, fake game folder, real Nexus).** 233 of 248 mods listed with
+  adult mods hidden, and thumbnails shown. Search "employee" gave 5. Download opened Employee
+  Mod's file page. A stand-in file under its real Nexus file name, saved into the watched
+  folder, was installed as Employee Mod 1.5 with `nexusModId` 53, and the card showed
+  INSTALLED.
+
 **Discord status** (`Core\DiscordPresence.cs`). While the game runs, the launcher tells the
 Discord app on the same PC what to show, over Discord's local RPC pipe (`\\.\pipe\discord-ipc-0`
 to `-9`: 8-byte header of opcode and length, then JSON; handshake with the application id, then
@@ -387,7 +429,7 @@ and no tunnel, and is meant for LAN or VPN.
 
 ---
 
-## Tests (`RewindTogether.Launcher.Tests`, xUnit, 223 tests)
+## Tests (`RewindTogether.Launcher.Tests`, xUnit, 250 tests)
 
 * **VDF / ACF parsing** (fixture text): current and legacy `libraryfolders.vdf`, escapes,
   comments, malformed input; locating the game across fake libraries; custom `installdir`; manual
@@ -425,6 +467,22 @@ and no tunnel, and is meant for LAN or VPN.
   * Steam "Join Game" becomes a `joinRequest`; invites; fatal init; exit when stdin closes
   * client-side parsing of every event
 * **Command line and save backups.**
+* **Nexus Mods against a stand-in GraphQL server** (loopback HTTP):
+  * search sends the game, the search text, `adultContent: false`, the sort and the page, and
+    names the app; adult, unpublished and non-https thumbnails are dropped
+  * mods by id keep the asked order; files and the MD5 lookup ignore other games; errors and
+    429 become plain messages; a non-https API address is refused
+  * Download goes to the one main file, else the Files tab
+  * Nexus file names recognised (browser copies, `.7z`/`.rar`), and a mod id must be its own part
+  * the Downloads watcher: finished files only (not `.crdownload`, empty, still being written,
+    or changing size), browser copies, files uploaded after the list was read, nothing old or
+    unwanted, each file once, and it gives up after two hours
+  * a Nexus install records `nexusModId`/`nexusVersion` and keeps an earlier hand install's
+    record; a manifest from an older launcher gets the id back from `nexus-<id>`, and unknown
+    fields survive a save
+  * `rt_nexus` round trip, "Get their mods" only when the host has Nexus mods the guest lacks
+  * a `.7z` fixture unpacks and its temporary folder is removed; a damaged archive explains
+    what to do
 * **Discord status against a fake Discord** (a real named pipe speaking Discord's frames):
   * what each state says, with no one named, and text kept within Discord's limits
   * the handshake carries the application id, and `SET_ACTIVITY` carries the process id

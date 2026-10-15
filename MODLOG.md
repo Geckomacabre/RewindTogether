@@ -473,3 +473,19 @@ starts itself, sync/interaction verified, docs for strangers.
   - Logo: launcher\tools\make-wordmark.py draws the REWIND TOGETHER sticker (RT pink/cyan, purple
     die-cut outline) to dist\discord\logo-wordmark.png.
   - 223 launcher tests, 5 clean runs in a row.
+- Launcher: Nexus Mods browser (uncommitted). Mods tab > NEXUS MODS lists Retro Rewind's mods
+  from Nexus's public GraphQL API (game retrorewindvideostoresimulator / 8977, 248 mods, 233
+  without adult ones), with search (nameStemmed MATCHES), sorts, thumbnails, and adult mods
+  hidden by default. Downloading for a player needs their Nexus account (free: the site's Mod
+  Manager Download; Premium: the API), and public apps may only sign players in after Nexus
+  registers them. So Download opens the main file's page (?tab=files&file_id=N) and a
+  Downloads-folder watcher installs the file when it lands. The user asked for "Download" in
+  place of "Get it on Nexus". Records keep nexusModId/nexusVersion (badges); the host publishes
+  rt_nexus, so a guest gets "Get their mods". .7z/.rar now open through Windows' tar.exe.
+  Checked live on a fake game: listing, search, Download opening the file page, and a stand-in
+  file under Employee Mod's real Nexus name installed as nexus-53 1.5 with an INSTALLED badge.
+  Found on the way: a 1.7.1 launcher (the user pressed Update in the test window, which
+  self-updated it for real) rewrote installed.json without the Nexus fields. Fixed: Load
+  restores the id from "nexus-<id>", and unknown fields survive saves. 250 launcher tests.
+  Phase 2 (sign in, one-click installs) needs Nexus to register the app: the email draft is in
+  dist\nexus\registration-email.txt.
