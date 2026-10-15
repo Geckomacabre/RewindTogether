@@ -45,6 +45,7 @@
 
 local Log    = require("log")
 local UE     = require("ue")
+local Replication = require("replication")
 local Safety = require("safety")
 
 local Spawn = {}
@@ -472,6 +473,10 @@ local PLACE_DELAY    = 1.5    -- let the game finish its own arrival work first
 local FALL_MARGIN    = 400.0  -- units below the host before we call it falling
 local RESCUE_EVERY   = 3.0
 local MAX_RESCUES    = 4
+-- A pawn older than this when this module first sees it is not an arrival.
+-- A real arrival is seen within a second or two of its pawn being made (the
+-- login path makes it; the poll is 1 s), so this has a wide margin.
+local ARRIVAL_WINDOW = 10.0
 
 --- Somewhere to stand near the host. `slot` spreads multiple guests around a
 --- ring so two arrivals do not resolve their overlap by pushing each other
@@ -493,9 +498,33 @@ local function spotNearHost(slot)
     }, rot or { Pitch = 0.0, Yaw = 0.0, Roll = 0.0 }
 end
 
+--- How long ago this pawn was made, in game seconds, or nil.
+local function ageOf(pawn)
+    local ok, t = pcall(function() return pawn:GetGameTimeSinceCreation() end)
+    return ok and type(t) == "number" and t or nil
+end
+
+--- Can this pawn be teleported without falling through the world? Not with
+--- its collision off or its movement switched off (MOVE_None): that is a
+--- guest at the till (guestinput.lua), and the one time a guest was moved
+--- like that it fell out of the store, out of network range and back - and
+--- crashed. Returns true, or false and why not. Fails open when the pawn
+--- cannot be asked, as every check here that would strand somebody does.
+local function canMove(pawn)
+    local okC, collides = pcall(function() return pawn:GetActorEnableCollision() end)
+    if okC and collides == false then return false, "its collision is off" end
+    local move = UE.TryGet(pawn, "CharacterMovement")
+    local mode = UE.valid(move) and UE.TryGet(move, "MovementMode") or nil
+    if mode == 0 then return false, "its movement is switched off" end
+    return true
+end
+
 --- Move a pawn, preferring the call that respects collision.
 local function moveTo(pawn, loc, rot)
     if not (UE.valid(pawn) and loc) then return false end
+    -- A guest's position is theirs (replication.lua trusts it): without this
+    -- the guest is never told, and the host takes their old spot back.
+    Replication.beforeHostMovesGuest(pawn)
 
     local ok, moved = pcall(function()
         return pawn:K2_TeleportTo(loc, rot or { Pitch = 0.0, Yaw = 0.0, Roll = 0.0 })
@@ -521,6 +550,14 @@ end
 --- Put one guest beside the host. Returns true if anything was done.
 function Spawn.placeGuest(pc, pawn, slot, why)
     if not (UE.valid(pc) and UE.valid(pawn)) then return false end
+
+    local movable, whyNot = canMove(pawn)
+    if not movable then
+        Log.info("not moving %s: %s (at the till?) - teleporting it would drop it " ..
+                 "through the floor", nameOf(pc), whyNot)
+        ensureViewTarget(pc, pawn)
+        return false
+    end
 
     local loc, rot = spotNearHost(slot)
     if not loc then
@@ -555,7 +592,21 @@ local function tendPlacedGuest(now, key, pc, pawn, slot)
     local entry = placed[key]
 
     if not entry then
-        placed[key] = { seen = now, at = nil, rescues = 0, lastRescue = 0 }
+        entry = { seen = now, at = nil, rescues = 0, lastRescue = 0 }
+        placed[key] = entry
+        -- A pawn that has been around for a while is not arriving: this
+        -- module has been reloaded underneath a session (a UE4SS hot reload
+        -- forgets everything here) and the guest is already somewhere they
+        -- chose. Measured in 1.7.0: the host's reload put a guest who was at
+        -- the till beside the host, collision off, and they fell out of the
+        -- world. Placing is for arrivals only; the falling rescue still runs.
+        local age = ageOf(pawn)
+        if age and age > ARRIVAL_WINDOW then
+            entry.at = now
+            Log.info("%s already has a character in the store (made %.0fs ago) - leaving " ..
+                     "them where they are", nameOf(pc), age)
+            ensureViewTarget(pc, pawn)
+        end
         return
     end
 
@@ -933,8 +984,8 @@ function Spawn.tickClient(now)
         Log.error(" character yet - that is why the screen is black.")
         Log.error("")
         Log.error(" This is fixed on the HOST's machine, not yours.")
-        Log.error(" Ask them to type  rt.fixpawns  in their UE4SS console")
-        Log.error(" (the black window next to their game).")
+        Log.error(" Ask them to type  rt.fixpawns  in their game's console")
+        Log.error(" (press ~ twice, type it, press Enter).")
         Log.error("")
         Log.error(" Nothing is broken on your end - stay connected while")
         Log.error(" they do it, and you will appear in the store.")

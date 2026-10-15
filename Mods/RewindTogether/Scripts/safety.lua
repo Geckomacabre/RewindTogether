@@ -14,15 +14,26 @@
     A crash cannot be caught. It can, however, be *observed after the fact*: if
     the mod wrote down that it was about to do something risky and never wrote
     down that it finished, then the thing it was doing is what killed the
-    process. So each risky operation drops a breadcrumb file before it starts
-    and deletes it when it returns. A breadcrumb still sitting there at the
-    next launch means the last run died inside that operation - so it is
+    process. So the mod keeps a small record on disk of what it is doing right
+    now - which part of the tick is running, which risky operations are in
+    flight, which feature is on probation - and the next launch reads what the
+    last run was doing when it stopped. The operation that was in flight is
     switched off, permanently, with an explanation.
 
     That last part is the whole point. The people playing this are not going to
     read a log. Without it they relaunch, hit the identical crash, and conclude
     the mod is broken. With it the game comes up working and tells them which
     cosmetic feature it turned off and how to turn it back on.
+
+    WHAT THE FIRST VERSION GOT WRONG, measured on two copies of the game on one PC: a guest
+    crashed inside a guarded operation (giving the host a body), and the next
+    launch switched off the HUD stand-in instead. Both copies run in the same
+    folder and shared one breadcrumb file; the host went on running guarded
+    operations, and each one deleted the file on its way out. Only the HUD
+    stand-in's probation file survived, so it took the blame. A nested guard
+    did the same to its outer one in a single copy. Now each running copy has
+    its own record, guards nest, and a feature on probation is only blamed when
+    nothing more specific was in flight.
 
     2. CONFIG SANITY
     ----------------
@@ -41,12 +52,45 @@ local Log = require("log")
 local Safety = {}
 
 -- Both live next to RewindTogether.log, in the game's working directory.
-local BREADCRUMB = "RewindTogether-inprogress.txt"
-local DISABLED   = "RewindTogether-disabled.txt"
+local DISABLED    = "RewindTogether-disabled.txt"
+-- What this copy of the game is doing right now (THE RECORD, below). One per
+-- running copy: a host and a guest started on one PC share the folder, and
+-- the single shared breadcrumb of earlier builds is how a guest's crash came to be pinned
+-- on the wrong feature.
+local RECORD      = "RewindTogether-inflight.%d.txt"
+local SLOTS       = 4
+-- A record nobody has written for this long belongs to a copy that is not
+-- running any more. A running copy writes one at least every tick (ten a
+-- second); a crashed one takes far longer than this to be started again.
+local STALE_AFTER = 10
+-- Earlier builds' breadcrumbs: honoured once after an update, then removed.
+local OLD_BREADCRUMB = "RewindTogether-inprogress.txt"
+local OLD_PROBATION  = "RewindTogether-probation.txt"
+
+--- The phase between ticks: the engine is running, none of this mod's Lua is.
+Safety.IDLE = "idle (between ticks)"
 
 local blocked   = {}      -- operation name -> reason it is off
-local crashedOn = nil     -- what the previous run died inside, if anything
+local crashedOn = nil     -- the operation the previous run died inside, if one
+local crashedIn = nil     -- else the tick phase it died in, when that says something
 local failures  = {}      -- operation name -> consecutive Lua failures
+
+local token     = nil     -- this process: a hot reload keeps it, a new launch does not
+local slot      = nil     -- which record is ours
+local recordFh  = nil
+local phase     = nil     -- the part of the tick running now
+local guards    = {}      -- risky operations in flight, outermost first
+local onProbation = nil   -- the feature on probation (Safety.probation)
+local probationPhases = {}   -- phase -> true: where that feature's own code runs
+local reloaded  = false   -- our record was left by this same process: a hot reload
+local written   = 0       -- the longest record written into our file so far
+local pid       = nil     -- this process's id, once native.lua can say (Safety.setPid)
+local closedWhy = nil     -- set as this Lua state closes in order (see THE RECORD)
+local closer    = nil     -- the finalizer that sets it
+local epoch     = 0       -- which init() a finalizer belongs to
+local pending   = {}      -- uncertain verdicts waiting for Safety.settle
+local orphans   = {}      -- fresh records of other copies: running, or dead seconds ago
+local cleanLast = nil     -- why the last run's record was found not to be a crash
 
 -- An operation that throws this many times running is not going to start
 -- working on the next tick.
@@ -61,8 +105,40 @@ local failures  = {}      -- operation name -> consecutive Lua failures
 local MAX_FAILURES = 3
 
 --------------------------------------------------------------------------
--- Breadcrumbs
+-- The record
 --------------------------------------------------------------------------
+--[[
+    One small text file per running copy, rewritten in place and flushed every
+    time what is in flight changes, through a handle kept open - so it is on
+    disk before the next line of Lua runs, and costs a write rather than the
+    create-and-delete earlier builds paid around every guarded call:
+
+        rt-inflight 1
+        token 1f2a40c80-1f2a4d740     this process (see processToken)
+        pid 37636                     its id, once RewindNative.dll has said it
+        beat 1760480000               os.time() of the last write
+        phase Bodies.tick             the part of the tick running
+        probation <op>                a feature on probation, and the phases
+        probation-phase Hud.tick      its own code runs in
+        guard <op>                    risky operations in flight, outermost first
+        closed <why>                  this Lua state was closed in order
+        end
+
+    Which file is ours: the one this process wrote before a hot reload (same
+    token), or else the first one no running copy is writing to. A copy that
+    crashed stops writing, so when it is started again it takes its own record
+    back and reads what it was doing; a copy still running keeps its record
+    fresh and is left alone.
+
+    A record says what the mod was doing when its run stopped, not why it
+    stopped. A crash, a closed window, Steam's Stop and a killed process all
+    leave the same one - so what it says about a risky operation in flight is
+    taken as it is (a guard is only ever left open by a run that died inside
+    it), and what it says about anything less certain waits for two more
+    witnesses: "closed", written by a finalizer as this Lua state is closed in
+    order, and the crash report the engine writes before a crashing process
+    dies, which RewindNative.dll can look for (Safety.settle).
+]]
 
 local function readLines(path)
     local out = {}
@@ -86,29 +162,259 @@ local function appendLine(path, text)
     return true
 end
 
+--- The same in every Lua state of this process and different in the next
+--- process: the addresses of two engine objects that live as long as it does.
+--- A UE4SS hot reload throws the Lua state away and keeps the process, and
+--- must not read like a crash. nil when the engine cannot be asked.
+local function processToken()
+    local parts = {}
+    for _, path in ipairs({ "/Script/CoreUObject.Default__Object",
+                            "/Script/Engine.Default__GameplayStatics" }) do
+        local ok, addr = pcall(function()
+            local o = StaticFindObject(path)
+            return o and o:GetAddress()
+        end)
+        if not (ok and math.type(addr) == "integer" and addr ~= 0) then return nil end
+        parts[#parts + 1] = ("%x"):format(addr)
+    end
+    return table.concat(parts, "-")
+end
+
+local function writeRecord()
+    if not recordFh then return end
+    local lines = { "rt-inflight 1", "token " .. (token or "-") }
+    if pid then lines[#lines + 1] = "pid " .. pid end
+    lines[#lines + 1] = "beat " .. os.time()
+    lines[#lines + 1] = "phase " .. (phase or "-")
+    if onProbation then
+        lines[#lines + 1] = "probation " .. onProbation
+        for p in pairs(probationPhases) do lines[#lines + 1] = "probation-phase " .. p end
+    end
+    for _, op in ipairs(guards) do lines[#lines + 1] = "guard " .. op end
+    if closedWhy then lines[#lines + 1] = "closed " .. closedWhy end
+    lines[#lines + 1] = "end\n"
+    local text = table.concat(lines, "\n")
+    -- Blank out what a longer earlier record left after "end" (never read,
+    -- but confusing to a person reading the file).
+    if #text < written then text = text .. (" "):rep(written - #text) end
+    written = math.max(written, #text)
+    pcall(function()
+        recordFh:seek("set", 0)
+        recordFh:write(text)
+        recordFh:flush()
+    end)
+end
+
+--- A record as written above, or nil (none, or not finished).
+local function readRecord(path)
+    local ok, fh = pcall(io.open, path, "r")
+    if not (ok and fh) then return nil end
+    local rec = { guards = {}, probationPhases = {} }
+    local complete = false
+    for raw in fh:lines() do
+        local line = raw:gsub("%s+$", "")
+        if line == "end" then
+            complete = true
+            break
+        end
+        local key, value = line:match("^(%S+) (.+)$")
+        if key == "token" and value ~= "-" then rec.token = value
+        elseif key == "pid" then rec.pid = math.tointeger(tonumber(value))
+        elseif key == "closed" then rec.closed = value
+        elseif key == "beat" then rec.beat = math.tointeger(tonumber(value))
+        elseif key == "phase" and value ~= "-" then rec.phase = value
+        elseif key == "probation" then rec.probation = value
+        elseif key == "probation-phase" then rec.probationPhases[value] = true
+        elseif key == "guard" then rec.guards[#rec.guards + 1] = value
+        end
+    end
+    fh:close()
+    return complete and rec or nil
+end
+
+--- What the run that left `rec` died of, judged by what it was doing:
+---   * a risky operation in flight: that one - the innermost, if they nested;
+---   * otherwise, the feature on probation, but only if the engine was running
+---     rather than this mod's Lua (between ticks), or that feature's own code
+---     was: it runs inside the engine's frame, where nothing else of ours does;
+---   * otherwise the tick phase, reported with nothing switched off. A crash in
+---     one module's tick says nothing about a feature that happened to be on
+---     probation at the time - which is exactly the mistake the first version made.
+--- Returns the operation to switch off, or nil and the phase to report, and
+--- whether that is certain. Only a guard in flight is: the rest is also what
+--- a closed window or a killed process leaves behind (Safety.settle).
+local function blameOf(rec)
+    if #rec.guards > 0 then return rec.guards[#rec.guards], nil, true end
+    local outside = rec.phase == nil or rec.phase == Safety.IDLE
+    if rec.probation and (outside or rec.probationPhases[rec.phase]) then
+        return rec.probation, nil, false
+    end
+    if outside then return nil, nil, true end    -- nothing to blame either way
+    return nil, rec.phase, false
+end
+
+local function blame(op, inPhase)
+    if op then
+        crashedOn = crashedOn or op
+        if not blocked[op] then
+            blocked[op] = "it crashed the game on the previous run"
+            appendLine(DISABLED, op)
+        end
+    elseif inPhase then
+        crashedIn = crashedIn or inPhase
+    end
+end
+
+--- One ended run's record: blamed at once when that is certain, otherwise
+--- kept for Safety.settle to ask the crash reports.
+local function judge(rec)
+    local op, inPhase, certain = blameOf(rec)
+    if certain then
+        blame(op, inPhase)
+    else
+        pending[#pending + 1] = { op = op, phase = inPhase, beat = rec.beat, pid = rec.pid,
+                                  closed = rec.closed }
+    end
+end
+
 --- Read what happened last time. Call once, before anything risky runs.
 function Safety.init()
     for _, op in ipairs(readLines(DISABLED)) do
         blocked[op] = "it crashed the game on a previous run"
     end
 
-    local pending = readLines(BREADCRUMB)
-    os.remove(BREADCRUMB)
+    if recordFh then pcall(function() recordFh:close() end) end
+    recordFh, crashedOn, crashedIn = nil, nil, nil
+    phase, guards, onProbation, probationPhases = nil, {}, nil, {}
+    pid, closedWhy, pending, orphans, cleanLast = nil, nil, {}, {}, nil
+    epoch = epoch + 1
 
-    if #pending > 0 then
-        crashedOn = pending[1]
-        if not blocked[crashedOn] then
-            blocked[crashedOn] = "it crashed the game on the previous run"
-            appendLine(DISABLED, crashedOn)
+    -- Every record nobody writes any more belongs to a run that has ended:
+    -- each is judged once, then cleared (the one this copy takes over is
+    -- rewritten below). One still being written is a copy that is running -
+    -- or one killed or crashed seconds ago and started straight again, which
+    -- Safety.settle tells apart once RewindNative can say whether its process
+    -- is alive. Measured: a killed copy relaunched by Steam started its mod 7 s
+    -- after the kill, inside the 10 s a record counts as fresh.
+    token = processToken()
+    local now = os.time()
+    local own, free, ended = nil, nil, {}
+    for n = 1, SLOTS do
+        local rec = readRecord(RECORD:format(n))
+        if rec and token and rec.token == token then
+            own = own or n                   -- this process, before a hot reload
+        elseif rec == nil then
+            free = free or n
+        elseif now - (rec.beat or 0) > STALE_AFTER then
+            judge(rec)
+            ended[#ended + 1] = n
+            free = free or n
+        else
+            orphans[#orphans + 1] = { slot = n, rec = rec }
+        end
+    end
+    slot = own or free
+    reloaded = own ~= nil
+    for _, n in ipairs(ended) do
+        if n ~= slot then os.remove(RECORD:format(n)) end
+    end
+
+    -- An earlier build, after an update: its breadcrumb named the operation in flight. Its
+    -- probation file alone said nothing about what crashed (see the header).
+    local old = readLines(OLD_BREADCRUMB)[1]
+    os.remove(OLD_BREADCRUMB)
+    os.remove(OLD_PROBATION)
+    if old and not (crashedOn or crashedIn or #pending > 0) then blame(old, nil) end
+
+    if slot then
+        -- Binary: one byte on disk per character, so the padding above fits.
+        local ok, fh = pcall(io.open, RECORD:format(slot), "wb")
+        if ok and fh then recordFh, written = fh, 0 end
+    end
+    writeRecord()
+
+    -- Armed after the record is open, on purpose: lua_close runs finalizers
+    -- newest first, so this one still finds the file open. A crash runs no
+    -- finalizer; a UE4SS hot reload does (and is told apart by the token).
+    local mine = epoch
+    closer = setmetatable({}, { __gc = function()
+        if mine == epoch then Safety.closed("its Lua state was closed") end
+    end })
+    return crashedOn
+end
+
+--- Decide what init() could not, with RewindNative's help (native.lua):
+--- `pidAlive(pid)` says whether a process is a running copy of the game, and
+--- `crashesSince(t, pid)` counts the crash reports the engine wrote since t
+--- about that process. Either may answer nil, and either may be missing.
+---
+--- First, a record that still looked fresh and whose process is gone is a
+--- run that has ended after all, and is judged like the rest. Then each run
+--- whose record was uncertain (a feature on probation, or a tick phase, but
+--- no operation in flight):
+---   * a crash report since its last write: it crashed, blamed as judged;
+---   * none: a closed window, Steam's Stop, a killed process - not a crash;
+---   * nobody can say: a record its Lua state closed in order is not a
+---     crash, anything else is blamed as before (better a feature off
+---     than the same crash at every launch).
+--- Runs before anything risky - main.lua calls it once RewindNative is up;
+--- report() settles without it if nobody did.
+function Safety.settle(crashesSince, pidAlive)
+    local fresh = orphans
+    orphans = {}
+    for _, o in ipairs(fresh) do
+        local alive = nil
+        if pidAlive and o.rec.pid then
+            local ok, a = pcall(pidAlive, o.rec.pid)
+            if ok then alive = a end
+        end
+        if alive == false then
+            judge(o.rec)
+            os.remove(RECORD:format(o.slot))
         end
     end
 
-    return crashedOn
+    local list = pending
+    pending = {}
+    for _, p in ipairs(list) do
+        local reports = nil
+        if crashesSince and p.beat then
+            local ok, n = pcall(crashesSince, p.beat - 5, p.pid)
+            if ok and math.type(n) == "integer" and n >= 0 then reports = n end
+        end
+        if reports == 0 or (reports == nil and p.closed) then
+            cleanLast = (reports == 0) and "the engine wrote no crash report for it"
+                        or ("it was closed in order (" .. p.closed .. ")")
+        else
+            blame(p.op, p.phase)
+        end
+    end
+end
+
+--- This process's id (native.lua), into the record: a crash report names the
+--- process it is about, and two copies of the game share the Crashes folder.
+function Safety.setPid(id)
+    if math.type(id) ~= "integer" or id <= 0 or id == pid then return end
+    pid = id
+    writeRecord()
+end
+
+--- The record says this Lua state is closing in order. Nothing of this mod
+--- runs after it - but the engine still does, so a crash report written
+--- later still counts (Safety.settle).
+function Safety.closed(why)
+    closedWhy = tostring(why or "closed")
+    writeRecord()
 end
 
 --- Say what was turned off and why. Loud, because it is the difference
 --- between "the mod fixed itself" and "half of it silently stopped working".
 function Safety.report()
+    if #pending > 0 or #orphans > 0 then Safety.settle(nil, nil) end
+    if cleanLast then
+        Log.info("safety: the last run stopped without crashing (%s) - nothing switched off",
+                 cleanLast)
+    end
     if crashedOn then
         Log.error("=====================================================")
         Log.error(" The game crashed last time during:")
@@ -120,8 +426,26 @@ function Safety.report()
         Log.error(" Type  rt.safety        to see what is off, or")
         Log.error("       rt.safety reset  to try it again after an update.")
         Log.error("=====================================================")
+    elseif crashedIn then
+        Log.warn("=====================================================")
+        Log.warn(" The game crashed last time while Rewind Together was")
+        Log.warn(" running: %s", crashedIn)
+        Log.warn("")
+        Log.warn(" Nothing risky of its own was in flight, so nothing has")
+        Log.warn(" been switched off. If it happens again, rt.safety shows")
+        Log.warn(" this - pass it on to whoever made the mod.")
+        Log.warn("=====================================================")
     elseif next(blocked) then
         Log.warn("Some features are off after an earlier crash - see rt.safety")
+    end
+    if reloaded then
+        Log.info("safety: carried on from this game's previous Lua state (a UE4SS hot " ..
+                 "reload) - that is not a crash")
+    end
+    if not recordFh then
+        Log.warn("safety: no crash record could be kept (%s) - a crash will not be " ..
+                 "traced to its cause", slot and "the folder is not writable"
+                 or "every slot is taken by a running copy")
     end
 end
 
@@ -137,35 +461,74 @@ function Safety.blockedList()
     return out
 end
 
+--- The tick phase the previous run died in with nothing switched off, or nil.
+function Safety.lastCrashPhase() return crashedIn end
+
+--- Which record this copy of the game keeps (1-4), or nil.
+function Safety.slot() return slot end
+
 --- Forget every block, so a risky feature gets another chance.
 function Safety.reset()
     local n = 0
     for _ in pairs(blocked) do n = n + 1 end
-    blocked, crashedOn, failures = {}, nil, {}
+    blocked, crashedOn, crashedIn, failures = {}, nil, nil, {}
     os.remove(DISABLED)
-    os.remove(BREADCRUMB)
+    os.remove(OLD_BREADCRUMB)
+    os.remove(OLD_PROBATION)
     return n
+end
+
+--- Which part of the tick is running (main.lua, before each module). In the
+--- record at once, so a crash in a module's own code is put down to that
+--- module - and not to a feature that happens to be on probation.
+function Safety.phase(name)
+    if name == phase then return end
+    phase = name
+    writeRecord()
+end
+
+--- For a risky feature that stays on once switched on, instead of running
+--- once - the guest HUD stand-in (hud.lua). If it is going to take the game
+--- down, it does so from whatever the game runs next, not from the call that
+--- switched it on, so guard() cannot see it. It goes in the record when it is
+--- switched on and comes out with Safety.trusted, once it has been seen
+--- working or has been switched off again. A run that dies in between, while
+--- the engine was running or while `phases` (where its own code runs) were,
+--- retires it, exactly as a guarded call would. Returns false when it is
+--- switched off after an earlier crash.
+function Safety.probation(op, phases)
+    if blocked[op] then return false end
+    if onProbation == op then return true end
+    onProbation, probationPhases = op, {}
+    for _, p in ipairs(phases or {}) do probationPhases[p] = true end
+    writeRecord()
+    return true
+end
+
+function Safety.trusted(op)
+    if onProbation ~= op then return end
+    onProbation, probationPhases = nil, {}
+    writeRecord()
 end
 
 --- Run something that might take the process down.
 ---
 --- Returns (ran, result): `ran` is false when the operation is switched off,
 --- which is deliberately distinct from an operation that ran and returned nil.
---- The breadcrumb is written and closed before fn is called, so it survives a
---- process that never gets to run another line.
+--- The record names it, flushed, before fn is called, so it survives a process
+--- that never gets to run another line. Guards nest: an inner one returning
+--- puts the outer one back in the record (the first version removed it).
 function Safety.guard(op, fn, ...)
     if blocked[op] then return false, nil end
 
-    local ok, fh = pcall(io.open, BREADCRUMB, "w")
-    if ok and fh then
-        fh:write(op .. "\n")
-        fh:flush()
-        fh:close()
-    end
+    local depth = #guards
+    guards[depth + 1] = op
+    writeRecord()
 
     local success, result = pcall(fn, ...)
 
-    os.remove(BREADCRUMB)
+    for i = #guards, depth + 1, -1 do guards[i] = nil end
+    writeRecord()
 
     if not success then
         failures[op] = (failures[op] or 0) + 1
@@ -194,6 +557,34 @@ function Safety.guard(op, fn, ...)
     -- travel cannot accumulate across a whole session into a false positive.
     failures[op] = nil
     return true, result
+end
+
+--- Tests only: what the record holds and how this run started.
+function Safety._state()
+    local g = {}
+    for i, op in ipairs(guards) do g[i] = op end
+    return { slot = slot, token = token, phase = phase, guards = g, probation = onProbation,
+             crashedOn = crashedOn, crashedIn = crashedIn, reloaded = reloaded,
+             pid = pid, closed = closedWhy, pending = #pending, orphans = #orphans,
+             cleanLast = cleanLast,
+             file = slot and RECORD:format(slot) or nil }
+end
+
+--- Tests only: run the finalizer lua_close would run for this Lua state.
+function Safety._close()
+    local mt = closer and getmetatable(closer)
+    if mt and mt.__gc then mt.__gc(closer) end
+end
+
+--- Tests only: forget what init() read, as a new Lua state would.
+function Safety._forget()
+    if recordFh then pcall(function() recordFh:close() end) end
+    recordFh = nil
+    blocked, crashedOn, crashedIn, failures = {}, nil, nil, {}
+    phase, guards, onProbation, probationPhases = nil, {}, nil, {}
+    token, slot, reloaded = nil, nil, false
+    pid, closedWhy, pending, orphans, cleanLast = nil, nil, {}, {}, nil
+    epoch = epoch + 1
 end
 
 --------------------------------------------------------------------------
@@ -309,7 +700,7 @@ function Safety.checkConfig(cfg, myId)
         if trimmed:match("^%d+$") then
             note("Config.JoinTarget looks like a Steam ID. Friends cannot join " ..
                  "by Steam ID on this build - put their IP address there instead " ..
-                 "(they get it from CHECK CONNECTION.bat).")
+                 "(they get it from Extras\\CHECK CONNECTION.bat).")
         end
     else
         cfg.JoinTarget = ""

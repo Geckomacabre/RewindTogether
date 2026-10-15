@@ -92,6 +92,78 @@ public static class GameProcess
         return IsRunning(game);
     }
 
+    private delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern int GetClassName(IntPtr hwnd, System.Text.StringBuilder name, int size);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hwnd);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool PostMessage(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    private const uint WmClose = 0x0010;
+
+    /// <summary>
+    /// The game's own window (Unreal's "UnrealWindow" class). Process.MainWindowHandle is just the
+    /// front-most visible window, which can be UE4SS's GUI console (1.6's installer switched it on).
+    /// </summary>
+    private static IntPtr FindGameWindow(int pid)
+    {
+        IntPtr found = IntPtr.Zero;
+        var cls = new System.Text.StringBuilder(64);
+        EnumWindows((h, _) =>
+        {
+            GetWindowThreadProcessId(h, out uint owner);
+            if (owner != (uint)pid || !IsWindowVisible(h)) return true;
+            cls.Clear();
+            GetClassName(h, cls, cls.Capacity);
+            if (cls.ToString() != "UnrealWindow") return true;
+            found = h;
+            return false;
+        }, IntPtr.Zero);
+        return found;
+    }
+
+    /// <summary>
+    /// Asks the game to quit the way its window's close button does (never kills it), then waits.
+    /// True once it has exited; false if it is still running after <paramref name="timeout"/>.
+    /// Checked on the real game (October 2026): it quits in about 1.5 s from the main menu or a
+    /// store, and its DLLs are free at once.
+    /// </summary>
+    public static async Task<bool> CloseAsync(GameInstall game, TimeSpan timeout)
+    {
+        if (FindProcessId(game) is not int pid) return true;
+        try
+        {
+            using var p = Process.GetProcessById(pid);
+            Log.Info($"Asking Retro Rewind (pid {pid}) to close.");
+            IntPtr window = FindGameWindow(pid);
+            bool asked = window != IntPtr.Zero ? PostMessage(window, WmClose, IntPtr.Zero, IntPtr.Zero) : p.CloseMainWindow();
+            if (!asked) Log.Warn("Retro Rewind has no window to close yet.");
+            using var cts = new CancellationTokenSource(timeout);
+            await p.WaitForExitAsync(cts.Token);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or Win32Exception)
+        {
+            // ArgumentException: it exited between the two calls.
+            Log.Warn("Closing the game: " + ex.Message);
+        }
+        // Its files stay locked for a moment after the process is gone.
+        for (int i = 0; i < 10 && IsRunning(game); i++) await Task.Delay(500);
+        bool closed = !IsRunning(game);
+        if (closed) await Task.Delay(1000);
+        return closed;
+    }
+
     public static void OpenInShell(string pathOrUrl)
     {
         try

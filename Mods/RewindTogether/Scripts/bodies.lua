@@ -37,6 +37,23 @@
     operation that has taken this game down before (see safety.lua). It runs
     behind a breadcrumb: if it crashes, the next launch switches it off and
     says so, and co-op carries on without it.
+
+    PAWNS COME AND GO, AND NOT ONLY WHEN SOMEBODY LEAVES
+
+    On a guest, everything the host replicates - the host's pawn, the NPCs
+    this borrows from - is destroyed when the guest goes out of network range
+    and created again, under a new name, when they come back (measured in
+    1.7.0: a guest fell out of the store and back). So nothing found here is
+    kept past the tick it was found in: pawns, meshes and donors are looked up
+    afresh on every poll, the animation sequences are remembered by path, and
+    the bookkeeping, which is keyed by name, forgets every name that is gone.
+
+    A guest crashed in this module's tick in 1.7.0, right after coming back
+    into range. It was not this module: UE4SS's member-name cache was holding
+    pointers into the strings of a Lua state two hot reloads had closed, and
+    the first new name it learned made it re-hash them (RewindNative.cpp, "THE
+    UE4SS NAME CACHE"). Dressing a pawn is simply where the most names are
+    used for the first time.
 ]]
 
 local Log    = require("log")
@@ -57,7 +74,10 @@ local dressed  = {}
 local placed    = {}
 local placedRot = {}
 
--- pawn full name -> { seqs = {...}, playing = "idle"|"walk"|"run" }.
+-- pawn full name -> { seqs = { idle = path, ... }, playing = "idle"|"walk"|"run" }.
+-- The sequences by PATH: an asset kept in Lua is freed by garbage collection
+-- once nothing in the engine uses it (PROJECT.md 0 - NPC looks crashed on
+-- exactly that).
 -- Declared up here, with the rest of the per-pawn bookkeeping, because dress()
 -- writes it and dress() is defined above the animation section below. A Lua
 -- local is only visible to code written after it; declaring this later made it
@@ -68,8 +88,13 @@ local findSequencesFor
 local lastPoll = 0
 local reported = false
 local noDonorWarned = false
+local offWarned = false
+local nextAssetWalk = 0
 
 local POLL_INTERVAL = 2.0
+-- The last-resort donor search walks every object in the engine (15 ms, and
+-- it hands back objects that are being torn down): at most this often.
+local ASSET_WALK_EVERY = 30.0
 
 local RISKY_OP = "giving other players a visible body (Config.BorrowNpcBodies)"
 -- Named separately so a crash retires the animation search WITHOUT taking
@@ -77,13 +102,19 @@ local RISKY_OP = "giving other players a visible body (Config.BorrowNpcBodies)"
 local ANIM_OP  = "searching for animations to drive a borrowed body " ..
                  "(Config.DriveBodyAnimation)"
 
--- Where to borrow from, best first. Staff persist in the store; customers only
--- exist while the shop is open, which is why staff are preferred.
+-- Where to borrow from, best first: the store's own NPC classes (ue.lua knows
+-- their paths, so each is a GetActorOfClass, never a walk). Staff persist in
+-- the store; customers only exist while the shop is open; passers-by walk the
+-- street whether it is or not. Earlier builds listed guesses here ("Staff_C",
+-- "Customer_C") that never matched anything, and each miss cost a walk.
 local DONOR_CLASSES = {
-    "Staff_C", "Staff",
-    "AI_Character_C", "AI_Character",
-    "Customer_C", "Customer",
+    "AI_Employee_Character_C",
+    "AI_Client_Character_C",
+    "AI_WalkBy_Character_C",
+    "AI_BackAlleyVendor_Character_C",
 }
+-- Every NPC, for the ranked search when none of those answers first.
+local ANY_NPC = "AI_Base_Character_C"
 
 --------------------------------------------------------------------------
 -- Reading a skeletal mesh component
@@ -218,49 +249,53 @@ local function findDonor()
         end
     end
 
-    -- 2. Any skeletal mesh component in the level that actually has a mesh in
-    --    it, other than a player's.
+    -- 2. Every NPC there is, ranked.
     --
     --    This exists because of a measurement: with the shop closed,
     --    "NPC classes present in this level: none found right now". Customers
     --    and staff are spawned when the shop opens, so on the quiet screen
-    --    where somebody is most likely to be testing this, route 1 finds
-    --    nothing at all and the feature looks broken rather than waiting.
-    local comps = FindAllOf("SkeletalMeshComponent")
-    if comps then
-        local fallback = nil
-        for _, comp in ipairs(comps) do
+    --    where somebody is most likely to be testing this, route 1 can find
+    --    nothing and the feature looks broken rather than waiting.
+    --
+    --    Earlier builds walked every SkeletalMeshComponent in the engine here:
+    --    15 ms, every two seconds while the donor was not the best one, and a
+    --    walk hands back components whose actors are being destroyed - on a
+    --    guest, every NPC the host's range has just dropped. The engine's own
+    --    actor list leaves those out.
+    local fallback = nil
+    for _, npc in ipairs(UE.findAll(ANY_NPC) or {}) do
+        if UE.alive(npc) then
+            local comp = UE.TryGet(npc, "Mesh")
             if UE.alive(comp) then
-                local owner = ownerOf(comp)
-                local ownerClass = UE.valid(owner) and UE.ClassNameOf(owner) or ""
-                if not ownerClass:find("Player_Character") then
-                    local donor = describeComponent(comp, ownerClass ~= "" and ownerClass
-                                                         or "a skeletal mesh in the level",
-                                                    false)
-                    -- A better donor is worth searching the whole list for.
-                    -- Taking the first match found one with no animation
-                    -- blueprint and produced a T-posing body sliding around
-                    -- the store, which is what got reported. Rank 3 - a real
-                    -- character with an animation blueprint - is as good as it
-                    -- gets, so stop there; anything less is only kept in case
-                    -- nothing better turns up.
-                    if donor and donor.rank >= 3 then return donor end
-                    if donor and (not fallback or donor.rank > fallback.rank) then
-                        fallback = donor
-                    end
+                local donor = describeComponent(comp, UE.ClassNameOf(npc), true)
+                -- A better donor is worth searching the whole list for.
+                -- Taking the first match found one with no animation
+                -- blueprint and produced a T-posing body sliding around the
+                -- store, which is what got reported. Rank 3 - a real
+                -- character with an animation blueprint - is as good as it
+                -- gets, so stop there; anything less is only kept in case
+                -- nothing better turns up.
+                if donor and donor.rank >= 3 then return donor end
+                if donor and (not fallback or donor.rank > fallback.rank) then
+                    fallback = donor
                 end
             end
         end
-        if fallback then return fallback end
     end
+    if fallback then return fallback end
 
     -- 3. Any loaded skeletal mesh asset at all. No animation blueprint comes
     --    with this, so the body stands in its bind pose - but a T-posing
     --    figure sliding around the store still answers "where is my friend",
-    --    which is the whole question.
-    local asset = FindFirstOf("SkeletalMesh")
-    if UE.valid(asset) then
-        return { class = "a loaded skeletal mesh (no animation)", asset = asset, rank = 0 }
+    --    which is the whole question. That is a walk of the whole object
+    --    array, so it is rare, and the asset is used this tick and not kept.
+    local now = os.clock()
+    if now >= nextAssetWalk then
+        nextAssetWalk = now + ASSET_WALK_EVERY
+        local asset = FindFirstOf("SkeletalMesh")
+        if UE.alive(asset) then
+            return { class = "a loaded skeletal mesh (no animation)", asset = asset, rank = 0 }
+        end
     end
 
     return nil
@@ -800,6 +835,7 @@ findSequencesFor = function(asset)
     local all = FindAllOf("AnimSequence")
     if not all then return nil end
 
+    -- Paths, not the sequences: these are kept for as long as the body is.
     local out, any, seen = {}, nil, 0
     for _, seq in ipairs(all) do
         seen = seen + 1
@@ -807,13 +843,15 @@ findSequencesFor = function(asset)
         -- alive(), not valid(): an asset can be part-way through being torn
         -- down and still answer as a UObject.
         if UE.alive(seq) and UE.sameObject(skeletonOf(seq), want) then
-            local name = ""
-            pcall(function() name = (seq:GetFullName():match("([^%.:/]+)$") or ""):lower() end)
-            any = any or seq
-            if     name:find("idle")  then out.idle = out.idle or seq
-            elseif name:find("walk")  then out.walk = out.walk or seq
-            elseif name:find("jog")
-                or name:find("run")   then out.run  = out.run  or seq
+            local path = UE.pathOf(seq)
+            local name = path and (path:match("([^%.:/]+)$") or ""):lower() or ""
+            if path then
+                any = any or path
+                if     name:find("idle")  then out.idle = out.idle or path
+                elseif name:find("walk")  then out.walk = out.walk or path
+                elseif name:find("jog")
+                    or name:find("run")   then out.run  = out.run  or path
+                end
             end
         end
     end
@@ -857,8 +895,10 @@ local function driveAnimation(pawn, key)
 
     if wanted == state.playing then return end
 
-    local seq = state.seqs[wanted]
-    if not UE.valid(seq) then return end
+    -- Found again by path, only when it changes (UE.findObject costs a little
+    -- memory per call, and this runs every tick).
+    local seq = UE.findObject(state.seqs[wanted])
+    if not UE.alive(seq) then return end
 
     -- PlayAnimation switches the component to single-node mode itself, which
     -- is what takes the borrowed blueprint out of the picture.
@@ -885,6 +925,10 @@ function Bodies.tick(now)
     if UE.IsStandalone() then return end
 
     local mine  = UE.GetPawn()
+    -- No pawn of our own for the moment (a guest's being replaced, say):
+    -- nothing tells "ours" from "theirs" then, and a body put on our own
+    -- would be inside our camera. Next tick.
+    if not UE.alive(mine) then return end
 
     -- Animation runs every tick. Dressing is the expensive part and stays on
     -- the poll below; matching a walk cycle to a moving player cannot be.
@@ -912,7 +956,7 @@ function Bodies.tick(now)
     -- an upgrade from pointless churn. Anything below the best rank stays a
     -- candidate: staff and customers only exist once the shop is open, so the
     -- donor available at join time is very often the worst one all session.
-    local todo, others = {}, 0
+    local todo, others, present = {}, 0, {}
     for _, p in ipairs(pawns) do
         -- sameObject, not ==: UE4SS returns a new wrapper per lookup, so the
         -- local pawn does not necessarily compare equal to itself. Getting
@@ -922,6 +966,7 @@ function Bodies.tick(now)
             local key = nil
             pcall(function() key = p:GetFullName() end)
             if key then
+                present[key] = true
                 -- Before anything else: whatever reverts the offset does so
                 -- after dress() has returned and verified it, so this has to
                 -- be a standing check rather than part of dressing.
@@ -931,6 +976,15 @@ function Bodies.tick(now)
                     todo[#todo + 1] = { key = key, pawn = p, have = dressed[key] }
                 end
             end
+        end
+    end
+
+    -- Forget every pawn that is not here any more. On a guest that is the
+    -- host's pawn each time the guest leaves network range: it comes back as
+    -- a new actor under a new name, and is dressed again as one.
+    for _, book in ipairs({ dressed, placed, placedRot, anim }) do
+        for key in pairs(book) do
+            if not present[key] then book[key] = nil end
         end
     end
 
@@ -950,7 +1004,15 @@ function Bodies.tick(now)
 
     if #todo == 0 then return end
 
-    local donor = findDonor()
+    -- Behind the same breadcrumb as dressing: it reads the NPCs' components.
+    local searched, donor = Safety.guard(RISKY_OP, findDonor)
+    if not searched then
+        if not offWarned then
+            offWarned = true
+            Log.warn("bodies for other players are off after an earlier crash (rt.safety)")
+        end
+        return
+    end
     if not donor then
         if not noDonorWarned then
             noDonorWarned = true
@@ -968,8 +1030,11 @@ function Bodies.tick(now)
         if entry.have == nil or rank > entry.have then
             local ran = Safety.guard(RISKY_OP, dress, entry.pawn, donor, entry.have ~= nil)
             if not ran then
-                Log.warn("bodies for other players are off after an earlier crash " ..
-                         "(rt.safety)")
+                if not offWarned then
+                    offWarned = true
+                    Log.warn("bodies for other players are off after an earlier crash " ..
+                             "(rt.safety)")
+                end
                 return
             end
             dressed[entry.key] = rank
@@ -1087,6 +1152,11 @@ end
 
 function Bodies.init(config)
     cfg = config
+end
+
+--- Tests only: the per-pawn bookkeeping, keyed by pawn name.
+function Bodies._books()
+    return { dressed = dressed, placed = placed, anim = anim }
 end
 
 return Bodies

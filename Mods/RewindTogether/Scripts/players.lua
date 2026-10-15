@@ -23,7 +23,10 @@ local Players = {}
 local RISKY_OP = "creating a floating nametag (Config.ShowNametags)"
 
 local cfg = nil
-local tags = {}          -- pawn full name -> { comp = , pawn = }
+-- pawn full name -> { label = }. The tag component itself is never kept: it
+-- dies with its pawn - which a guest's game destroys whenever the host walks
+-- out of network range - so it is asked of the pawn, found this tick, each time.
+local tags = {}
 local roster = {}        -- playerState full name -> { name = , controller = }
 
 local NAMETAG_HEIGHT = 105.0    -- just above the character's head
@@ -154,6 +157,18 @@ local function makeTag(pawn, label)
     return comp
 end
 
+--- The nametag on this pawn, for this tick, or nil: the pawn's own
+--- TextRenderComponent (players never have one of their own). The second
+--- result is false when the pawn could not be asked at all - then a missing
+--- tag is not a reason to make another one.
+local function tagOf(pawn)
+    local cls = getTextRenderClass()
+    if not cls then return nil, false end
+    local comp = nil
+    local asked = pcall(function() comp = pawn:GetComponentByClass(cls) end)
+    return UE.alive(comp) and comp or nil, asked
+end
+
 --- Create/refresh a nametag above every remote player.
 function Players.updateNametags()
     if not cfg or not cfg.ShowNametags or cfg.SafeMode then return end
@@ -180,21 +195,22 @@ function Players.updateNametags()
     local present = {}
 
     for _, pawn in ipairs(pawns) do
-        if UE.alive(pawn) and pawn ~= localPawn then
+        if UE.alive(pawn) and not UE.sameObject(pawn, localPawn) then
             local key = pawn:GetFullName()
             present[key] = true
             local entry = tags[key]
+            local comp, asked = nil, true
+            if entry then comp, asked = tagOf(pawn) end
 
-            if not entry or not UE.alive(entry.comp) then
+            if not comp and asked then
                 -- Resolve a display name from the owning controller's state.
                 local label = UE.PlayerNameOf(UE.TryGet(pawn, "PlayerState")) or "Player"
 
-                local comp = makeTag(pawn, label)
-                if comp then
-                    tags[key] = { comp = comp, label = label }
+                if makeTag(pawn, label) then
+                    tags[key] = { label = label }
                     Log.debug("nametag created for %s", label)
                 end
-            else
+            elseif comp then
                 -- Face the local camera and fade out beyond the configured range.
                 if camLoc then
                     pcall(function()
@@ -202,11 +218,11 @@ function Players.updateNametags()
                         local dx, dy, dz = camLoc.X - p.X, camLoc.Y - p.Y, camLoc.Z - p.Z
                         local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
                         local visible = dist <= cfg.NametagMaxDistance
-                        entry.comp:SetVisibility(visible, false)
+                        comp:SetVisibility(visible, false)
                         if visible then
                             local yaw = math.deg(math.atan(dy, dx))
                             UE.withHit(function(hit)
-                                entry.comp:K2_SetWorldRotation(
+                                comp:K2_SetWorldRotation(
                                     { Pitch = 0.0, Yaw = yaw, Roll = 0.0 }, false, hit, false)
                             end)
                         end
@@ -218,29 +234,30 @@ function Players.updateNametags()
 
     -- Drop tags for pawns that are no longer in the world.
     --
-    -- Note what this does NOT do: touch the departed pawn. When an actor is
-    -- destroyed the engine destroys its components with it, so the tag is
-    -- already gone and calling DestroyComponent on it would be reaching into
-    -- freed memory - which is not a Lua error and cannot be caught. Absence
-    -- from the name set is the entire test, and forgetting the entry is the
-    -- entire cleanup.
-    for key, entry in pairs(tags) do
-        if not present[key] then
-            if UE.alive(entry.comp) then
-                pcall(function() entry.comp:K2_DestroyComponent(entry.comp) end)
-            end
-            tags[key] = nil
-        end
+    -- Note what this does NOT do: touch the departed pawn, or its tag. When an
+    -- actor is destroyed the engine destroys its components with it, so the
+    -- tag is already gone and calling DestroyComponent on it would be reaching
+    -- into freed memory - which is not a Lua error and cannot be caught. (Earlier
+    -- builds did exactly that, through a component kept from an earlier
+    -- tick.) Absence from the name set is the entire test, and forgetting the
+    -- entry is the entire cleanup.
+    for key in pairs(tags) do
+        if not present[key] then tags[key] = nil end
     end
 end
 
+--- Take every tag down: from the pawns that still exist this tick, asked
+--- afresh; the rest went with their pawns.
 function Players.clearNametags()
-    for key, entry in pairs(tags) do
-        if UE.alive(entry.comp) then
-            pcall(function() entry.comp:K2_DestroyComponent(entry.comp) end)
+    if next(tags) then
+        for _, pawn in ipairs(UE.findAll("Player_Character_C") or {}) do
+            local key = nil
+            pcall(function() key = pawn:GetFullName() end)
+            local comp = key and tags[key] and UE.alive(pawn) and tagOf(pawn) or nil
+            if comp then pcall(function() comp:K2_DestroyComponent(comp) end) end
         end
-        tags[key] = nil
     end
+    tags = {}
 end
 
 function Players.init(config)

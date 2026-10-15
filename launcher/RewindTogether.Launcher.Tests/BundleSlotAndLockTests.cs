@@ -433,7 +433,7 @@ public class NativeDllAndLockTests
         using (new FileStream(g.Ue4ssDll, FileMode.Open, FileAccess.Read, FileShare.Read))
         {
             var ex = Assert.Throws<GameFilesLockedException>(() => Ue4ssSetup.InstallFromZip(g, zip));
-            Assert.StartsWith("Close Retro Rewind first, then press Install UE4SS again.", ex.Message);
+            Assert.StartsWith("Close Retro Rewind first, then press Set up again.", ex.Message);
         }
         Assert.Equal(proxyBefore, File.ReadAllBytes(g.Ue4ssProxyDll)); // not even the unlocked file was overwritten
     }

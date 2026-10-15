@@ -170,6 +170,11 @@ _G.RegisterHook = function(path, fn)
     H.hooks[path] = fn
 end
 
+-- Present in this UE4SS build (measured: UE4SS.dll's Lua API names). Fired by
+-- hand from the tests, as UEngine::LoadMap would before tearing a world down.
+H.loadMapHooks = {}
+_G.RegisterLoadMapPreHook = function(fn) H.loadMapHooks[#H.loadMapHooks + 1] = fn end
+
 H.commands = {}
 _G.RegisterConsoleCommandHandler = function(name, fn) H.commands[name] = fn end
 

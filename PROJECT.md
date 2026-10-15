@@ -29,6 +29,41 @@ each bug actually was.
   game's `Content` and `Engine` folders (against the whole install it flags our own deployed copy).
 - After a test session: restore `GameUserSettings.ini` from `GameUserSettings.ini.pre-claude` and
   delete `RewindTogether.devbridge`, `RewindTogether.bridge.*` and `RewindTogether.trace.*`.
+- `dev/gw.py drive` (and `coop_test.py`'s window measuring) needs `RT_WINDRIVE` pointing at a
+  WinDrivePid.ps1 (not in the repo). Guest presses for tests: on the guest's slot,
+  `require("guestinput")._onPress(code)` sends exactly what the key poll sends; run the pawn's
+  own `InpActEvt_*` event first if the guest's local game should react too. Codes: 1 LMB,
+  2 RMB, 3 E, 4 V, 5 B, 6 K, 7 left the till, 8 skin picked, 9 Space at the till.
+- Hot reload (Ctrl+R in a game window) reloads **both** copies (UE4SS reads the key globally;
+  that is why the logs show two "loading..." per reload) and swaps the bridge slots. It is safe
+  to use now: RewindNative empties UE4SS's member-name cache on every reload (see the gotchas),
+  and the host's spawn.lua leaves a guest whose pawn already exists where they are. Measured:
+  four reloads in a row, 670-710 stale names dropped per copy, guest never moved.
+- Out of network range, for real: push the guest's pawn 40,000 units down from the host (flying
+  mode, `RescueFallingGuests` off for the test) AND make the guest move a moment. Relevancy is
+  measured from the camera the server last heard about, and an idle client sends none - the
+  host's pawn stayed on a motionless guest 40,000 units below for 24 s, and went within 3 s of
+  a W press. `rt.bring` from the host brings them back.
+- Animation checks: a skeletal mesh's bones are only refreshed while it is drawn, so sample bone
+  positions (`Mesh:GetSocketLocation(FName("RightFoot"))`, Mixamo names) with that window's
+  camera on the NPC; off screen they read frozen on both machines.
+- Customers: the clock only runs once the sign is open (`OpenSign_C` "Change Sign"(true, 1)).
+  End of day: at 20:00 with the store empty, `Door_FrontDoor_C:Interaction({})` is the host's
+  click on the door. **It autosaves the host's slot** - back the saves up first.
+- Crash records: each running copy keeps `Binaries\Win64\RewindTogether-inflight.<n>.txt`
+  (safety.lua): its process token and pid, the tick phase running, the risky operations in
+  flight and the feature on probation. Every record whose run has ended is judged at the next
+  launch: an operation in flight is blamed outright; with none, the feature on probation (only if
+  the engine was running, between ticks, or its own phase was) or the phase - but only once the
+  engine's crash report for that pid confirms a crash (RewindNative `rt_crashes_since`): a
+  closed window, Steam's Stop or a killed copy leaves none and switches nothing off. A record
+  that still looks fresh counts as a running copy unless `rt_pid_alive` says its process is gone.
+  A hot reload (same process) is not a crash. Measured (one copy, stand-in put on probation):
+  window closed -> "stopped without crashing"; killed and relaunched 8 s later -> the same; a
+  real crash (a Lua string for ClientMessage's FName) -> reported against its phase via its own
+  crash report, stand-in not blamed. And, two copies: a guest killed inside a guard with the host
+  running in the same folder -> only the guard blamed. `rt.safety reset` clears. A crashed copy
+  that hangs after writing its report still counts as running until it is closed.
 - Crash reports: `%LOCALAPPDATA%\RetroRewind\Saved\Crashes\`. Read the minidump's thread
   name (ThreadNamesStream) before theorising: GameThread vs a "Foreground Worker" changes
   everything.
@@ -52,6 +87,17 @@ each bug actually was.
   (410 of 414 calls). Hand and inventory code works on `Self`. There are no Blueprint RPCs
   and no locally-controlled checks.
 - **Every HUD call goes to the GameMode's single widget** (the host's).
+- **A guest's NPCs never finish their own start-up.** `AI_Base_Character`'s Bind Init casts
+  GetGameMode to `Core_Gamemode_C` and, on a guest, retries every second forever, so "Step 2 of
+  creation Skin" never runs there: no Character Scale (0 - the walk animation's play rate divides
+  by it, so the walk froze), no hair on the head socket, no face materials, the thought bubble
+  never hidden, no actor tick. npcsync.lua supplies each from the host. Do NOT switch the NPC's
+  actor tick on for a guest: its Limit Walk Speed by rotation eases the actor toward
+  GetControlRotation, which is zero without an AI controller.
+- **The level's AI Director runs on a guest too** (ActorGatherer calls Init Director on every
+  machine) and spawned walk-bys of its own there: Role Authority, no controller, frozen at the
+  spawn points. npcsync.lua stops its timer and removes them; everything real arrives by
+  replication as a simulated proxy.
 
 ### UE4SS 3.0.1 (this build) gotchas: each one was a crash or a silent refusal
 
@@ -62,6 +108,12 @@ each bug actually was.
   consumed). Struct out-params like `FHitResult` with `{}` do work.
 - **Struct fields come back in the FName table's casing** (`FRotator.pitch`). Use
   `UE.field` / `UE.rot` / `UE.vec`.
+- **...and a struct going IN is read the same way:** `{ Pitch = -30 }` reaches an FRotator
+  parameter as pitch 0 (measured; `pitch = -30` works). Every guest action used to arrive level.
+  Build rotators with `UE.rotArg` (both casings). FVector and FLinearColor (`R,G,B,A`) are fine.
+- **`SetReplicates(true)` registers an actor with the net driver only when it sees the flag
+  change.** Write `bReplicates` yourself first and it never replicates (measured: build-mode boxes
+  were invisible to guests). replication.lua calls SetReplicates before anything else.
 - **LoopAsync and RegisterKeyBind run Lua off the game thread.** The tick uses
   `LoopInGameThreadWithDelay`, and keys are polled with `IsInputKeyDown`.
 - **Nothing from an RPC hook is applied inside the hook.** Hooks queue; `Chan.pump()` applies.
@@ -86,6 +138,50 @@ each bug actually was.
   Blueprint changed from the native defaults (measured: bReplicates yes, bReplicateMovement no).
   And a property patched on a class default is never SENT: Unreal only replicates values that
   differ from the default. Patch actors, check their own flags.
+- **Available and measured:** `RegisterLoadMapPreHook` (runs inside `UEngine::LoadMap`, before
+  the old world goes - the only safe moment to drop anything tied to it), and
+  `FProperty:GetOffset_Internal()` from Lua. `Core_Gamemode_C`'s class default object has its
+  persistent ubergraph frame, so its Blueprint events can run on it.
+- **`UE.TryCall(obj, fn, nil)` calls fn with NO argument:** it packs `...` into a table, and a
+  lone nil vanishes. Call directly when null must reach the engine.
+- **Writing an FText property overruns it by 8 bytes:** UE4SS writes 0x18, this build's FText
+  is 0x10, and the next field is clobbered (measured: an end-of-day row's Font Size became
+  4.98e+20; a TextSign's command pointers turned to garbage). Use `UE.setText(obj, prop, s)`
+  (KismetSystemLibrary `SetTextPropertyByName`, whose FText is its last parameter).
+- **A TSet parameter can't be passed from Lua:** nil (and a table) corrupts the call -
+  "Add Product Scanned to the list" drew $0.00 at the wrong type, and the guest hung ~30 s
+  later. Build the result yourself (`SetStringPropertyByName` and friends).
+- **`UChildActorComponent` has no reflected GetChildActor here:** read its `ChildActor`
+  property. **RegisterHook on a Blueprint function runs AFTER it.** `UClass:GetCDO()` exists.
+- **`SetReplicates(true)` sets RemoteRole = SimulatedProxy on UE 5, every call** - replicating
+  already or not. On a remote player's pawn that makes the player's own character a simulated proxy
+  on their machine: no movement input, no moves sent to the host. Call it only to START an actor
+  replicating. `SetAutonomousProxy` is not reflected; writing `RemoteRole = 2` works.
+- **Never replicate a child actor** (one a ChildActorComponent spawned, `GetParentActor()` valid):
+  every machine spawns its own, so replicating the host's gives guests duplicates.
+- **A server-side move of a trusted client's pawn never reaches the client.** With the client's
+  position trusted, nothing corrects it and the server takes the client's old position back.
+  Untrust it for a moment (`Replication.beforeHostMovesGuest`).
+- **FindAllOf / FindFirstOf also return actors already destroyed** (until garbage collection),
+  as valid-looking wrappers. MEASURED: a dev-bridge probe called `HasAnyFlags` on a destroyed
+  TalkSystem_C from FindFirstOf and the host died (UE4SS+0x3ff221, reading 0x8). Check
+  `UE.alive` first: it reads the object array's own flags, which is safe.
+- **A function that returns no object still gives Lua a truthy wrapper, and `:GetFName()` on it
+  is a native crash** (reads null+0x18; `pcall` does not catch it). Measured: a dev-bridge probe
+  named `stash:GetAttachParentActor()` on a guest the instant the cash replicated, before its
+  attachment had - the guest died. Check `UE.valid(x)` / `x:IsValid()` first.
+- **test/smoke.lua's main chunk is at Lua's 200-local limit.** A new section goes inside
+  `do ... end`.
+- **UE4SS caches every member name by a pointer into the Lua string, and never copies it.**
+  `obj.Mesh`, `obj:Possess()`, `obj[name]`: UE4SS+0x22b590 memoises the name's wide form in a
+  static `unordered_map<string_view, wstring>` whose keys point into the Lua strings themselves.
+  A string that dies - all of them on a hot reload, a runtime-built name when Lua collects it -
+  leaves a dangling key, and the next insert that grows the map re-hashes every key. That was
+  the guest crash in "Bodies.tick" (GameThread, UE4SS+0x22ba30, FNV-1a registers, 513th name,
+  512 -> 1024 buckets; bodies.lua was only where the most new names were used). Rules: index
+  objects only with literal names, or through `UE.TryGet/TrySet/TryCall` / `UE.pin` (they keep
+  the string alive); RewindNative 3 empties the cache when the mod's Lua state starts and closes.
+  `native\RewindNative\test_namecache.cpp` reproduces the crash on a real MSVC map.
 
 ### New modules
 
@@ -93,11 +189,14 @@ each bug actually was.
 |---|---|
 | `devbridge.lua` | Dev-only file command bridge + phase trace (inert without its switch file) |
 | `input.lua` | Keys polled on the game thread |
-| `hud.lua` | Builds the game's own HUD on a guest and feeds it the host's numbers |
+| `hud.lua` | Builds the game's own HUD on a guest and feeds it the host's numbers; arms the HUD stand-in and mirrors the hand socket into `Object Hold` |
 | `worldsync.lua` | Sign, expansions, season level, sky/lights/fog/collection values, stripes |
-| `npcsync.lua` | NPC looks (body, clothes, tints, hair) + AnimBP inputs, matched by position |
-| `guestinput.lua` | Guest presses (RMB/LMB/E/V/B/K) replayed on the guest's pawn on the host |
-| `native.lua` + `native\RewindNative\` | `RewindNative.dll`: the player-0 redirect (see below) |
+| `npcsync.lua` | NPC looks (body, clothes, tints, hair and its colour, mouth and eyes, size and walk rate, staff badge) + AnimBP inputs, emotion, thought bubble and basket, matched by position; the cash a customer holds out made to replicate; on a guest it stops the guest's own AI Director and removes the NPCs that spawned |
+| `guestinput.lua` | Guest presses (RMB/LMB/E/V/B/K) replayed on the guest's pawn on the host; the till for guests (entry, glides, W/Space, the cash drawer, the register's screen and the change counted onto the counter mirrored); the guest's skin picker and its choice; each guest's tool; the guest's own placement preview in build mode (and its turns, action 10); the host's HUD after a replay; no replays while the end-of-day summary is up |
+| `skinsync.lua` | Walls, floors, ceilings and furniture in the host's skins (`AC_MeshSkin` numbers, applied the way the save loader does); the shelf titles' genre cards (`ShelveTitle_C` Update Material with the host's values) |
+| `talksync.lua` | A guest's conversations (TalkSystem_C / UI_Talk_C): hidden on the host, drawn on the guest, the guest's answer replayed on the host as guest action 11; ended if the guest leaves |
+| `dayend.lua` | The end of the day on a guest: the host's summary (`UI_EndOfTheDay_C`) rebuilt and filled with the host's texts, closed when the host's closes, then the new-day banner (`UI_NewDay_C`) |
+| `native.lua` + `native\RewindNative\` | `RewindNative.dll`: the player-0 redirect, the guest HUD stand-in and the UE4SS name-cache repair (see below) |
 | `launchfile.lua` | The launcher contract: `launch.json` in, `status.json` out |
 
 ### The native helper
@@ -109,6 +208,28 @@ it with `package.loadlib`. Its exports are lua_CFunctions that read and return v
 build) on the four GameplayStatics player getters. Inside `Native.asPlayer(guestPC, fn)` they
 answer with the guest. The DLL pins itself (Lua frees libraries on hot reload).
 
+Version 2 adds the guest HUD stand-in: `GetGameMode` is wrapped the same way, and on a guest it
+answers the HUD library's calls with `Core_Gamemode_C`'s class default (hud.lua arms it). It
+reads the caller's `FFrame` (Code at +0x20: null means ProcessEvent, i.e. Lua or C++, which keep
+getting null; Node at +0x10: the Blueprint function asking) and the next bytecode statement,
+and checks liveness through UE4SS's exported object table (`FUObjectArray::IndexToObject`,
+`FUObjectItem::GetUObject`, `UObjectBase` accessors) before every answer. `build.bat` first
+builds and runs `test_standin.cpp`, a native test of those decisions with the engine faked.
+Measured on this build: a guest's Blueprints ask `GetGameMode` about a thousand times a second.
+
+Version 3 adds the UE4SS name-cache repair (`rt_namecache`, `rt_namecache_purge`; RewindNative.cpp
+"THE UE4SS NAME CACHE"). The cache is found by the code that locks it and starts the FNV hash,
+cross-checked against the same function's `size() == max_size()` test, and its layout is
+validated under UE4SS's own lock before anything is written; on any other UE4SS build it does
+nothing. The nodes are unlinked and leaked, never freed (the DLL has its own CRT heap, and UE4SS
+uses a node's string after it drops the lock). `build.bat` runs `test_namecache.cpp` too, which
+also checks the signature against the installed UE4SS.dll (exactly one match, at +0xF41118).
+It also answers safety.lua's three questions about the last run: `rt_pid`, `rt_pid_alive` (a
+running process with this exe's name) and `rt_crashes_since(t, pid)` (report folders under
+`%LOCALAPPDATA%\RetroRewind\Saved\Crashes` since t whose `CrashContext.runtime-xml` names that
+ProcessId). Measured: closing the window runs no Lua finalizer (UE4SS does not close Lua states
+at exit) and no `GameInstance:ReceiveShutdown` hook, so the crash report is the only witness.
+
 ### The launcher
 
 `launcher\` (C# WPF, .NET 8): it detects the game, installs UE4SS and the mod, and has a mod
@@ -117,14 +238,94 @@ manager, host/join, a Steam-relay tunnel and a friends list. Its contract with t
 
 ### Still open
 
-- The guest HUD doesn't show product-in-hand or look-at details. The fix that's ready to
-  build: on a guest, make Blueprint `GetGameMode` (null there) answer with the guest's HUD
-  widget. Every Blueprint use of that result is `Cast<Core_Gamemode_C>` (fails safely) or
-  `ToInterface<UI_Interface_C>` (the widget implements it); checked across all Blueprints.
-  It needs a native "replace null" mode and clearing on map load.
+- Done since (measured, two copies): the guest HUD shows product-in-hand and look-at details.
+  The plan written here first - answer `GetGameMode` with the HUD widget - could not have
+  worked: the widget implements `UI_Interface_C`, but every one of its interface events is an
+  empty stub (bp `UI_Player_Interface__game_ui`, @1025-@1031 are bare `pop_flow`); only
+  `Core_Gamemode_C`'s events forward to "UI Game Interface". What shipped: the DLL answers with
+  `Core_Gamemode_C`'s class default object (its "UI Game Interface" set to the guest's widget),
+  only to frames of the `UI_Player_Interface_C` function library whose next statement is
+  `ToInterface<UI_Interface_C>`. A second piece was needed: the pick-up runs on the host and
+  only the hand attachment replicates, so the guest's own `Object Hold` stayed empty and
+  `Set Object Hold` (which draws the panel) never ran; hud.lua mirrors the hand socket into it.
+  RewindNative.cpp "THE HUD STAND-IN" and hud.lua's header have the details.
 - Verified since: guest put-back (LMB while holding) shows on both screens.
-- Not yet verified: the till/checkout, build mode, skin/mesh tools, end of day while a guest
-  is connected, and a real two-account Steam relay.
+- Verified since (two copies, screenshots of both): a guest at the **till** (card and cash
+  customers, change from the drawer, Space, W), **build mode** (V, pack and place), the **skin
+  tool** (B; carpet and shelf colours from the picker on the guest's screen), **selling** (K) and
+  the **end of day** (host closes up; the guest stays through the summary into day 2). What it
+  took is in VERSION.txt; the till's reasoning is at the top of guestinput.lua's till section.
+  Note: V is the move tool (build mode); B selects the mesh tool, whose click opens the skin
+  picker. There is no key for tool 3 in the game.
+- Verified since (two copies, screenshots of both, bone positions sampled): a guest's NPCs walk
+  (feet swinging through a stride like the host's, play rate 0.8-1.25 instead of 0), wear their
+  hair on the head in the host's colour, show the host's mouth, eyelids and emotion (an angry
+  face on both), show a thought bubble only when the host's NPC does, with its icon, turned to
+  the guest, and staff wear their name badge. The guest's own AI Director is stopped and its
+  frozen extras removed. Eye direction is not mirrored (the host animates it every frame).
+- Done since (two copies, screenshots of both): what used to be host-only on a guest's screen.
+  **Shelf titles and text signs** (skinsync.lua; 73/73 titles and 6/6 signs the same; matched by
+  place AND yaw - a double-sided shelf has two titles on one spot). **The register's screen**
+  (guestinput.lua "THE REGISTER'S SCREEN": page, member, lines with prices and tags, total,
+  desktop name/date, rest screen; the guest builds each product line itself - the game's "Add
+  Product Scanned to the list" takes a TSet, see the gotchas). **The change counted onto the
+  counter** (those Money actors made to replicate). **The guest's placement preview** (the guest's
+  own pawn runs Ghost Tick each frame from a ReceiveTick hook, with the furniture's class default
+  for the box's answers, after the same `Trace from Camera for LookAt Ghost` the host's Look At
+  Test asks - without it the guest saw green where the host threw the box; measured after: the
+  shelf placed at the preview's exact spot and yaw, and no preview where the host throws).
+  **The end of day** (dayend.lua: the summary and its XP page, then the new-day banner).
+  **A customer paying** (npcsync.lua: the Money_NPC-Stash_C in the hand made to replicate, and the
+  basket hidden with the game's own Toggle Visiblity Basket - reported: customers handed a guest
+  their basket).
+- Done since (two copies, screenshots of both): **film posters** (skinsync.lua: each
+  PosterFrame_C's "Specific SKU" by place, drawn with its own Apply Material for Film based on SKU
+  - with SKU 0 a frame rolls a random film, which every guest's did; 4/4 the same), **what NPCs
+  say** (npcsync.lua: hooks on AI_Base_Character "AI Talk about a problem" / "AI Toggle a
+  permanent problem", the guest fills the same Widget3D_AiSpeakInWorld) and the **level-up
+  unlocks** (dayend.lua: HorizontalBox_LevelUpUnlock's UI_Statistic_Levelup_Unlock_C bytes, plus
+  UI_GenreUnlock_C for a movie genre; levels 12 and 13 the same on both). Live testing tips: the
+  clock is WeatherSystem_C Hour/Minute (a one-minute timer advances it); the door ends the day once
+  the sign is closed after 12:00 and every customer is going home; the summary's XP page is its
+  UX_Button_Base bound event; GameMode "Change XP" adds XP (cumulative per level in
+  gamesettings_XP-Per-Level).
+- Done since (two copies, measured): **a guest could not walk** - replication.lua's
+  SetReplicates(true) reset the guest's pawn to SimulatedProxy on the guest (UE 5 does that on
+  every call; see the gotchas), so its input did nothing and the host never saw it move ("no
+  guest pawn"). SetReplicates now only starts replication, and a remote player's pawn that is not
+  AutonomousProxy is put back (RemoteRole = 2). **The host takes the guest's position**
+  (bServerAcceptClientAuthoritativePosition beside bIgnoreClientMovementErrorChecksAndCorrection),
+  and the host's own moves of a guest (spawn.lua moveTo: the join placement, rt.bring) go through
+  `Replication.beforeHostMovesGuest`, which lets the engine correct the guest for 5 s
+  (ClientAdjustPosition) before trust returns (`Replication.restoreTrust`, every host tick).
+  **NPCs shaking on a guest**: the snack display's boxes are child actors; replicating them gave
+  guests a second set whose buttons had collision, and customers climbed them on the guest. Child
+  actors are never replicated now. **A guest's conversations** (talksync.lua) are on the guest's
+  screen, answered with the guest's mouse (guest action 11). Regression pass on the final build:
+  join placement, walking and jumping, both bodies visible to each other, rt.bring, the till
+  (enter, exit at the register's exit), a tape off a shelf and back, build mode (placed at the
+  preview's spot), a conversation with the staff member, customers past the snack display.
+- Still missing on a guest's screen: changing a shelf's MODEL is not available to a guest (its
+  mesh flow casts GetGameMode to Core_Gamemode_C, which the stand-in never answers); the mouse
+  wheel's tool switching is not sent to the host; the extra content a few conversations add under
+  the line (a film's poster) is not shown to a guest.
+- Done since (measured, two copies): the guest crash in "Bodies.tick" after leaving network range.
+  It was UE4SS's member-name cache after two hot reloads (see the gotchas), not the module. Three
+  cycles of "hot reload, guest pushed out of range (host's pawn and NPCs destroyed on the guest),
+  back (pawn re-created under a new name, dressed again)" ran clean. Also done: the breadcrumb no
+  longer blames a feature on probation for another module's crash (per-copy record, nested
+  guards), and a hot reload no longer re-places guests (and nothing teleports a pawn whose
+  collision or movement is off). Guest-side hardening on the way: bodies.lua keeps no engine
+  object across ticks (animations by path), forgets re-created pawns' old names, and no longer
+  walks every SkeletalMeshComponent for a donor; players.lua and hud.lua no longer keep a
+  nametag component or the widget class across ticks.
+- Done since (measured, one copy): a closed window or a killed copy with a feature on probation
+  no longer reads as a crash in that feature (the crash-report check above). Without
+  RewindNative it still does, as before - better a feature off than the same crash every launch.
+- Bookkeeping keyed by actor name grows without bound for re-created actors in skinsync.lua
+  (`applied`), npcsync.lua (`styled`, `faceOf`, `bubbleOf`, `looks`), replication.lua
+  (`patchedActors`), guestinput.lua and rpcchan.lua (small); not crash risks.
+- Not yet verified: a real two-account Steam relay.
 
 ---
 

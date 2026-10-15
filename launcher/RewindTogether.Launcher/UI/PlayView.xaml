@@ -8,66 +8,24 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- ================================================================ setup checklist -->
+        <!-- ================================================================ setup: one line, at most one button -->
         <Border Grid.Row="0" Style="{StaticResource Card}" Padding="18,12" Margin="0,0,0,14">
             <StackPanel>
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <Grid.Resources>
-                        <Style x:Key="Check" TargetType="TextBlock" BasedOn="{StaticResource Body}">
-                            <Setter Property="FontFamily" Value="{StaticResource DisplayFont}" />
-                            <Setter Property="FontSize" Value="15" />
-                            <Setter Property="Margin" Value="0,0,8,0" />
-                            <Setter Property="VerticalAlignment" Value="Top" />
-                        </Style>
-                    </Grid.Resources>
-
-                    <TextBlock Text="SETUP" Style="{StaticResource Eyebrow}" VerticalAlignment="Center" Margin="0,0,18,0" />
-
-                    <!-- game -->
-                    <DockPanel Grid.Column="1" Margin="0,0,16,0" VerticalAlignment="Center">
-                        <TextBlock DockPanel.Dock="Left" Style="{StaticResource Check}" Text="✔" Foreground="{StaticResource GreenBrush}" Visibility="{Binding GameOk, Converter={StaticResource Vis}}" />
-                        <TextBlock DockPanel.Dock="Left" Style="{StaticResource Check}" Text="✖" Foreground="{StaticResource RedBrush}" Visibility="{Binding GameOk, Converter={StaticResource NotVis}}" />
-                        <StackPanel>
-                            <TextBlock Style="{StaticResource Body}" Text="{Binding GameText}" FontSize="13" />
-                            <Button Style="{StaticResource SmallGhostButton}" Content="Browse..." Command="{Binding BrowseGameCommand}" HorizontalAlignment="Left" Margin="0,6,0,0"
-                                    Visibility="{Binding GameOk, Converter={StaticResource NotVis}}" />
-                        </StackPanel>
-                    </DockPanel>
-
-                    <!-- UE4SS -->
-                    <DockPanel Grid.Column="2" Margin="0,0,16,0" VerticalAlignment="Center">
-                        <TextBlock DockPanel.Dock="Left" Style="{StaticResource Check}" Text="✔" Foreground="{StaticResource GreenBrush}" Visibility="{Binding Ue4ssOk, Converter={StaticResource Vis}}" />
-                        <TextBlock DockPanel.Dock="Left" Style="{StaticResource Check}" Text="!" Foreground="{StaticResource YellowBrush}" Visibility="{Binding Ue4ssOk, Converter={StaticResource NotVis}}" />
-                        <StackPanel>
-                            <TextBlock Style="{StaticResource Body}" Text="{Binding Ue4ssText}" FontSize="13" />
-                            <Button Style="{StaticResource SmallGhostButton}" Content="{Binding Ue4ssAction}" Command="{Binding InstallUe4ssCommand}" HorizontalAlignment="Left" Margin="0,6,0,0"
-                                    Visibility="{Binding Ue4ssAction, Converter={StaticResource Vis}}" />
-                        </StackPanel>
-                    </DockPanel>
-
-                    <!-- Rewind Together -->
-                    <DockPanel Grid.Column="3" VerticalAlignment="Center">
-                        <TextBlock DockPanel.Dock="Left" Style="{StaticResource Check}" Text="✔" Foreground="{StaticResource GreenBrush}" Visibility="{Binding RtOk, Converter={StaticResource Vis}}" />
-                        <TextBlock DockPanel.Dock="Left" Style="{StaticResource Check}" Text="!" Foreground="{StaticResource YellowBrush}" Visibility="{Binding RtOk, Converter={StaticResource NotVis}}" />
-                        <StackPanel>
-                            <TextBlock Style="{StaticResource Body}" Text="{Binding RtText}" FontSize="13" />
-                            <WrapPanel Margin="0,6,0,0">
-                                <Button Style="{StaticResource SmallGhostButton}" Content="{Binding RtAction}" Command="{Binding RtActionCommand}" Margin="0,0,6,0"
-                                        Visibility="{Binding RtAction, Converter={StaticResource Vis}}" />
-                                <Button Style="{StaticResource SmallGhostButton}" Content="From zip..." Command="{Binding RtFromZipCommand}" Margin="0,0,6,0"
-                                        ToolTip="Install or update Rewind Together from a zip you downloaded" />
-                                <Button Style="{StaticResource SmallGhostButton}" Content="From folder..." Command="{Binding RtFromFolderCommand}"
-                                        ToolTip="For testers and developers: install from an unpacked mod folder (the one with Scripts\main.lua)" />
-                            </WrapPanel>
-                        </StackPanel>
-                    </DockPanel>
-                </Grid>
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Left" Text="SETUP" Style="{StaticResource Eyebrow}" VerticalAlignment="Center" Margin="0,0,18,0" />
+                    <!-- The launcher installs UE4SS and the mod by itself; this button is only there when
+                         something needs the player (close the game, find it, or a first click). -->
+                    <Button DockPanel.Dock="Right" Style="{StaticResource PinkButton}" Content="{Binding SetupButton}" Command="{Binding SetupCommand}"
+                            Padding="18,8" FontSize="14" VerticalAlignment="Center" Margin="14,0,0,0"
+                            Visibility="{Binding SetupButton, Converter={StaticResource Vis}}" AutomationProperties.Name="{Binding SetupButton}" />
+                    <TextBlock DockPanel.Dock="Left" Style="{StaticResource Body}" Text="{Binding SetupIcon}" FontFamily="{StaticResource DisplayFont}" FontSize="17"
+                               Foreground="{Binding SetupTone, Converter={StaticResource Tone}}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Style="{StaticResource Body}" Text="{Binding SetupText}" FontSize="14" TextWrapping="Wrap" />
+                        <TextBlock Style="{StaticResource Dim}" Text="{Binding SetupDetail}" FontSize="12" TextWrapping="Wrap" Margin="0,2,0,0"
+                                   Visibility="{Binding SetupDetail, Converter={StaticResource Vis}}" />
+                    </StackPanel>
+                </DockPanel>
                 <Border Margin="0,10,0,0" CornerRadius="9" Padding="12,7" Background="#22FFD319" Visibility="{Binding BuildWarning, Converter={StaticResource Vis}}">
                     <TextBlock Style="{StaticResource Body}" Text="{Binding BuildWarning}" Foreground="{StaticResource YellowBrush}" FontSize="13" />
                 </Border>

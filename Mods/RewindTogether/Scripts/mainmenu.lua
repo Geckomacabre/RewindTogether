@@ -328,7 +328,7 @@ function MainMenu.init(config)
     end)
     if not ok then
         Log.warn("could not bind the mouse for the main menu button; " ..
-                 "use the console (rt.join) or the F6 menu instead")
+                 "use the launcher, or rt.join in the game's console (~) instead")
     end
 end
 

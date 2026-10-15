@@ -8,14 +8,19 @@ One Windows exe (`dist\RewindTogetherLauncher.exe`, self-contained .NET 8 WPF, a
 player does not need to install .NET. Valve's `steam_api64.dll` is **not** bundled: the launcher
 loads the game's own copy at runtime.
 
-The release zip puts the mod next to the launcher, and the launcher installs it from there:
+The release zip puts the mod and the pinned UE4SS build next to the launcher, and the launcher
+installs both from there (no download):
 
 ```
 RewindTogetherLauncher.exe
 Mods\RewindTogether\mod.json
 Mods\RewindTogether\Scripts\*.lua
 Mods\RewindTogether\native\RewindNative.dll
+Mods\UE4SS\UE4SS_v3.0.1-944-g0196ef29.zip      (unmodified, with its LICENSE.txt)
+Extras\                                        (port tools for playing without Steam)
 ```
+
+For a player, setting up is: unzip, open the exe. See "One-click setup" below.
 
 | Play | Mods | Diagnostics |
 |---|---|---|
@@ -89,9 +94,35 @@ checks the usual folder names on every fixed drive. Players can also pick the fo
 mod's `mod.json` has a `game_build` that differs from the Steam `buildid`, the launcher shows a
 warning but still lets you play.
 
+**One-click setup** (`Core\SetupPlan.cs`, `MainViewModel.SetUpAsync`). `SetupPlan.For` works out
+what is still missing: UE4SS (missing, old layout or broken), Rewind Together (missing, damaged,
+or older than the bundled copy), or switching it on. The launcher then does all of it in order
+(back up the saves, UE4SS, the mod, switch on):
+
+* **by itself when it opens**, and again **the moment the game closes**. On its own it never
+  closes the game and never switches back on a mod the player switched off.
+* **before HOST and JOIN**, which also switch the mod on. Everyone in a session needs the same
+  version, so a newer bundled version is installed without asking.
+* from the **Setup line's one button** ("Set up Rewind Together", "Update to X", "Switch it on",
+  "Find the game...", "Close the game and set up").
+
+A running game keeps the mod's files locked. In that case the launcher asks once, then closes the
+game the way its close button does (`GameProcess.CloseAsync`: `WM_CLOSE` to Unreal's own
+`UnrealWindow`, never a kill) and carries on. It does not use `Process.CloseMainWindow`: that
+picks the front-most window, which is UE4SS's GUI console when that is shown (1.6's installer
+switched it on), and closing the console leaves the game running. Before HOST/JOIN with only an update pending, "Play without updating" is offered
+too. An exe started from inside the zip (Explorer copies only the exe to `%TEMP%`, without the
+`Mods` folder) is detected, and the Setup line says to extract the zip first. Nothing is
+half-installed in that case.
+
+The Setup line is one sentence and at most one button. Installing from a zip or folder you picked
+is on the Mods tab ("Add mod from file...", "From folder...").
+
 **UE4SS** (`Core\Ue4ssSetup.cs`). The launcher detects UE4SS by looking for `Win64\dwmapi.dll`
 and `Win64\ue4ss\UE4SS.dll`, and also reports an old flat layout or a half-finished install. It
-installs a **pinned** build from GitHub and verifies the size and sha256 before unpacking anything.
+installs a **pinned** build: the copy in the release zip (`Mods\UE4SS\`, checked against the
+pinned size and sha256 first), else a cached download, else GitHub. Every source is verified
+before anything is unpacked.
 It never overwrites an existing `UE4SS-settings.ini`, `mods.txt` or `mods.json`. *Which build is
 pinned, and why, is explained under "Deviations" below.*
 
@@ -99,12 +130,12 @@ pinned, and why, is explained under "Deviations" below.*
 `Core\FileTransaction.cs`):
 
 * **Where it installs from.** If `<exe folder>\Mods\RewindTogether\mod.json` exists (the release
-  zip), that copy is *the* install source. The setup row's button installs or updates from it,
+  zip), that copy is *the* install source. Setup installs or updates from it,
   with no download and no file prompt. "Update available" compares its `mod.json` version with
   the installed `mod.json` (or `Net.VERSION` for old installs). The Mods tab shows that entry as
   "Included with the launcher". Without a bundled copy, the catalog entry is used as before, and
-  without that, the launcher asks for a zip. "From zip..." / "From folder..." stay available for
-  testers.
+  without that, the launcher asks for a zip. The Mods tab's "Add mod from file..." / "From
+  folder..." install it from anything you pick (for testers).
 * **Where it lands.** The mod is recognised by its `mod.json` id, or by its own `rpcchan.lua` +
   `net.lua` modules, so it always lands in `ue4ss\Mods\RewindTogether`, whatever the download is
   called. The whole folder is installed, including `native\RewindNative.dll`.
@@ -301,7 +332,7 @@ and no tunnel, and is meant for LAN or VPN.
 
 ---
 
-## Tests (`RewindTogether.Launcher.Tests`, xUnit, 170 tests)
+## Tests (`RewindTogether.Launcher.Tests`, xUnit, 181 tests)
 
 * **VDF / ACF parsing** (fixture text): current and legacy `libraryfolders.vdf`, escapes,
   comments, malformed input; locating the game across fake libraries; custom `installdir`; manual
@@ -352,6 +383,12 @@ and no tunnel, and is meant for LAN or VPN.
   * found next to the exe; ignored when missing, with a wrong id, without `main.lua`, or with
     broken JSON
   * becomes the catalog's install source, which adds the entry if the catalog lacks it
+* **Setup plan**: a fresh game gets UE4SS and the mod in one go; unknown state counts as missing;
+  a newer bundled version is an update, an older one never replaces a newer install; a
+  switched-off mod is only switched on; a damaged one is reinstalled; an old-layout or broken
+  UE4SS is reinstalled, while another working UE4SS build is kept; the one-line descriptions.
+* **Bundled UE4SS**: found at `Mods\UE4SS\<pinned file>`; a missing file or one with the wrong
+  bytes is ignored.
 * **native\ and locked files** (fake game trees):
   * the release layout installs with `native\RewindNative.dll`, and an update replaces the DLL and
     keeps `config.lua`
@@ -379,11 +416,30 @@ Checked by hand on the published exe, always against a fake game folder:
   * pressing it (through UI Automation) installed 1.7.1 with `native\RewindNative.dll` into the
     fake game, kept `config.lua`, and recorded the source as `bundled`
   * the save picker listed five slots with last-played dates
+* one-click setup (October 2026, through UI Automation, on fake game folders):
+  * the extracted release zip on a fresh fake game: opened, and within a second UE4SS (from the
+    bundled zip, no download) and Rewind Together 1.7.0 were installed and switched on; the
+    Setup line said "Ready to play"
+  * an installed 1.6.1 with an edited `config.lua`: updated to 1.7.0 by itself, `config.lua` kept
+  * switched off in `mods.txt`: left off at start, "Switch it on" turned it on in `mods.txt` and
+    `mods.json`
+  * with a stand-in game process running from the fake exe path: "Close the game and set up"
+    asked once, closed it and updated. Closing the stand-in game by hand made the launcher
+    finish the update by itself
+  * the exe alone in a temp folder: "Unzip the download first", and nothing installed
+* closing the **real** game (October 2026, with the user's OK; saves byte-identical afterwards):
+  * a close request from outside: quits in 1.6 s from the main menu and 1.4 s from inside a
+    store mid-day; `dwmapi.dll`, `UE4SS.dll` and `RewindNative.dll` free at once; the mod's crash
+    guard recorded "idle (between ticks)" and switched nothing off
+  * with UE4SS's GUI console shown, `Process.MainWindowHandle` is the console: the old
+    `CloseMainWindow` closed only the console and the game kept running
+  * `GameProcess.CloseAsync` itself (a temporary test, console shown and in front): closed the
+    game in 2.4 s, nothing left in use
 
 ## What is NOT tested
 
-These parts could not be tested here (one machine, one Steam account), and nothing was ever run
-against the real game:
+These parts could not be tested here (one machine, one Steam account). Apart from the close check
+above, the launcher was never run against the real game:
 
 * **Everything that needs Steam itself**:
   * `SteamAPI_InitFlat` from the helper, and the manual-dispatch callback loop
@@ -400,8 +456,9 @@ against the real game:
   exact timing against `steam://rungameid`.
 * **The whole host and join flow with the real mod**: `launch.json` being consumed, `status.json`
   transitions, and a guest's Unreal connection through the tunnel.
-* The real UE4SS download and install into a game folder. The download URL and sha256 were
-  verified against GitHub, but the install was only exercised on fake trees.
+* The real UE4SS install into the real game folder. The bundled zip is byte-identical to the
+  pinned GitHub file (sha256 checked when packaging), but the install was only exercised on fake
+  trees.
 * LogicMods detection by the `ModActor` byte search, on real Nexus paks.
 * **The game's own lock on `RewindNative.dll`.** It is simulated with an open handle, and with a
   system DLL loaded into the test process. The real pinned DLL inside a running Retro Rewind was
@@ -451,9 +508,10 @@ against the real game:
 
 ## Before a public release
 
-* The release zip should be `RewindTogetherLauncher.exe` plus `Mods\RewindTogether\` (with
-  `mod.json`, `Scripts\`, `native\`). With that layout no catalog URL is needed for Rewind
-  Together. For online updates without a bundled copy, fill in `url`, `sha256` and `size` for
+* Build the release zip with `py dev/package.py`: `RewindTogetherLauncher.exe` plus
+  `Mods\RewindTogether\` (with `mod.json`, `Scripts\`, `native\`) and `Mods\UE4SS\` (the pinned
+  zip, fetched once into `dist\cache\` and checked against the sha256 in `Ue4ssSetup.cs`). With
+  that layout setup needs no internet, and no catalog URL is needed for Rewind Together. For online updates without a bundled copy, fill in `url`, `sha256` and `size` for
   `rewind-together` in `Assets\catalog.json` and set `LauncherSettings.DefaultCatalogUrl` to a
   hosted catalog.
 * Consider signing the exe: SmartScreen warns about unsigned downloads.

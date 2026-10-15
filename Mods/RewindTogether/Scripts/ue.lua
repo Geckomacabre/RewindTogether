@@ -357,6 +357,16 @@ local KNOWN_CLASSES = {
     Storage_Box_C             = "/Game/VideoStore/asset/prop/Storage/Storage_Box.Storage_Box_C",
     Storage_Cartridge_C       = "/Game/VideoStore/asset/prop/Storage/Storage_Cartridge.Storage_Cartridge_C",
     Decoration_C              = "/Game/VideoStore/asset/prop/decoration/Decoration.Decoration_C",
+    -- skinsync.lua: the base classes of everything with an AC_MeshSkin.
+    Wall_C                    = "/Game/VideoStore/asset/prop/wall/Wall.Wall_C",
+    ShelveTitle_C             = "/Game/VideoStore/asset/prop/shelve/ShelveTitle.ShelveTitle_C",
+    Arcade_C                  = "/Game/VideoStore/asset/prop/arcade/Arcade.Arcade_C",
+    CandyDispenser_Base_C     = "/Game/VideoStore/asset/prop/CandyDispenser/CandyDispenser_Base.CandyDispenser_Base_C",
+    -- guestinput.lua: the till.
+    MembershipMachine_C       = "/Game/VideoStore/asset/prop/CheckOut/MembershipMachine.MembershipMachine_C",
+    CheckOut_C                = "/Game/VideoStore/asset/prop/CheckOut/CheckOut.CheckOut_C",
+    -- npcsync.lua: a guest's own AI Director, stopped.
+    AI_Director_C             = "/Game/VideoStore/core/blueprint/AI_Director.AI_Director_C",
     PosterFrame_C             = "/Game/VideoStore/asset/prop/PosterFrame/PosterFrame.PosterFrame_C",
     Standees_C                = "/Game/VideoStore/asset/prop/Standees/Standees.Standees_C",
     TextSign_C                = "/Game/VideoStore/asset/prop/decoration/TextSign/TextSign.TextSign_C",
@@ -491,6 +501,49 @@ end
 --- Has a class by this name been found (and its path learned)?
 function UE.classKnown(short)
     return classInfo[short] ~= nil
+end
+
+--- Tell the lookups where an actor class lives, when its path is already
+--- known - the host named it - so findFirst / findAll never walk to learn it.
+function UE.knowClass(short, path)
+    if type(short) ~= "string" or type(path) ~= "string" or classInfo[short] then return end
+    if not path:match("^/Game/[%w_/%-%.]+$") or path:match("([^%.]+)$") ~= short then return end
+    classInfo[short] = { path = path, actor = true }
+end
+
+--- Write an FText PROPERTY. Never `obj.Prop = FText(s)` (nor UE.TrySet with
+--- an FText): MEASURED on this build, UE4SS writes 0x18 bytes for an FText
+--- where the engine's is 0x10 (header dump), so the 8 bytes after the
+--- property are overwritten - an end-of-day statistic row's Font Size became
+--- 4.98e+20 and the row vanished; a text sign's "UI Text Command" pointer,
+--- right after its "User Text", turned to garbage for the garbage collector
+--- to find. KismetSystemLibrary SetTextPropertyByName takes the text as its
+--- LAST parameter (the extra bytes land in unused parameter space) and the
+--- engine copies it at its real size. FText parameters elsewhere (SetText)
+--- are fine for the same reason when they are the only or last one.
+function UE.setText(obj, prop, s)
+    local ksl = kismet()
+    if not (ksl and valid(obj)) or type(prop) ~= "string" or type(s) ~= "string" then return false end
+    return (pcall(function() ksl:SetTextPropertyByName(obj, FName(prop), FText(s)) end))
+end
+
+--- An asset or class by path, loaded now if it is not in memory yet: a mesh
+--- only the host's furniture used so far, a widget only a GameMode creates.
+--- KismetSystemLibrary LoadAsset_Blocking - a blocking load on the game
+--- thread, so for one path once in a while, never every tick.
+function UE.load(path)
+    local o = UE.findObject(path)
+    if o then return o end
+    local ksl = kismet()
+    if not ksl or type(path) ~= "string" then return nil end
+    local got = nil
+    pcall(function()
+        got = ksl:LoadAsset_Blocking(ksl:Conv_SoftObjPathToSoftObjRef(ksl:MakeSoftObjectPath(path)))
+    end)
+    if not valid(got) then return nil end
+    frame()
+    cache["O:" .. path] = got
+    return got
 end
 
 --- Every live actor of a class in the current world, subclasses included, or
@@ -1064,6 +1117,26 @@ function UE.rot(t)
     return { Pitch = p or 0.0, Yaw = y or 0.0, Roll = r or 0.0 }
 end
 
+--- A rotator to HAND to the engine (a parameter, a property write).
+---
+--- The read side's casing problem (UE.field, above) has a write side, and it
+--- is worse because it is silent. UE4SS fills an FRotator parameter by
+--- looking each field up under the name table's casing, which on this build
+--- is "pitch", "Yaw", "Roll". MEASURED: SetControlRotation({ Pitch = -30, .. })
+--- set a pitch of 0, the same call with `pitch = -30` set -30, and
+--- Conv_RotatorToVector({ Pitch = 45 }) came back level. So every rotator
+--- this mod built as { Pitch = .. } reached the engine with no pitch: guest
+--- actions were replayed looking dead level (a guest could pick up what was
+--- at eye height and nothing on the floor), and the sun copied to a guest
+--- sat on the horizon. FLinearColor (R, G, B, A) and FVector are unaffected.
+--- Both casings, so it works whichever way the name table goes.
+function UE.rotArg(t)
+    local r = UE.rot(t)
+    if not r then return nil end
+    return { Pitch = r.Pitch, pitch = r.Pitch, Yaw = r.Yaw, yaw = r.Yaw,
+             Roll = r.Roll, roll = r.Roll }
+end
+
 --- An engine FVector as a plain { X, Y, Z } table, or nil.
 function UE.vec(t)
     if t == nil then return nil end
@@ -1072,9 +1145,32 @@ function UE.vec(t)
     return { X = x, Y = y or 0.0, Z = z or 0.0 }
 end
 
+--- Keep a member name alive for as long as this Lua state lives, and return it.
+---
+--- MEASURED in a guest's crash dump (RewindNative.cpp, "THE UE4SS NAME
+--- CACHE"): UE4SS remembers every name used on an engine object - obj.Mesh,
+--- obj:Possess(), obj[name] - by a pointer into the Lua string it came in as,
+--- and never copies it. A name written in the source lives as long as the
+--- module does. A name BUILT at run time (concatenated, formatted, read off
+--- the engine like inspect.lua's property names, or typed into the dev
+--- bridge) is collected once nothing holds it, and UE4SS is left holding a
+--- pointer to freed memory - which it reads the next time it learns a new
+--- name and has to grow. So any name that is not a literal goes through here
+--- (or through TryGet/TrySet/TryCall, which do it) before it touches an
+--- object. A hot reload frees every string at once; that case is native.lua's.
+local pinned = {}
+function UE.pin(name)
+    if type(name) == "string" then pinned[name] = true end
+    return name
+end
+
+--- Tests only: is this name pinned?
+function UE._isPinned(name) return pinned[name] == true end
+
 --- Get a property if it exists, without throwing when it does not.
 function UE.TryGet(obj, propertyName)
     if not valid(obj) then return nil end
+    if type(propertyName) == "string" then pinned[propertyName] = true end
     local ok, v = pcall(function() return obj[propertyName] end)
     if ok then return v end
     return nil
@@ -1082,12 +1178,14 @@ end
 
 function UE.TrySet(obj, propertyName, value)
     if not valid(obj) then return false end
+    if type(propertyName) == "string" then pinned[propertyName] = true end
     return (pcall(function() obj[propertyName] = value end))
 end
 
 --- Call a UFunction by name if the object has it.
 function UE.TryCall(obj, fnName, ...)
     if not valid(obj) then return false, nil end
+    if type(fnName) == "string" then pinned[fnName] = true end
     local args = { ... }
     local ok, ret = pcall(function() return obj[fnName](obj, table.unpack(args)) end)
     return ok, ret

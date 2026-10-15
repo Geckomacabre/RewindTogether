@@ -324,7 +324,7 @@ function Chan.sendUpstream(loc, rot)
         local ok = pcall(function()
             pc:ServerSetSpectatorLocation(
                 { X = loc.X, Y = loc.Y, Z = loc.Z },
-                { Pitch = rot.Pitch, Yaw = rot.Yaw, Roll = UPSTREAM_MARK })
+                UE.rotArg({ Pitch = rot.Pitch, Yaw = rot.Yaw, Roll = UPSTREAM_MARK }))
         end)
         if ok then sent = sent + 1 end
     end
@@ -433,11 +433,13 @@ function Chan.sendAction(code, loc, rot)
     if not UE.alive(pc) or not (loc and rot) then return 0 end
     if code < 1 or code > ACTION_MAX then return 0 end
     local sent = 0
+    -- Through UE.rotArg: a rotator built as { Pitch = .. } reaches the engine
+    -- with pitch 0 on this build (ue.lua), and every action arrived on the
+    -- host looking level until it did.
+    local wire = UE.rotArg({ Pitch = rot.Pitch, Yaw = rot.Yaw, Roll = ACTION_BASE + code })
     for _ = 1, ACTION_REPEATS do
         local ok = pcall(function()
-            pc:ServerSetSpectatorLocation(
-                { X = loc.X, Y = loc.Y, Z = loc.Z },
-                { Pitch = rot.Pitch, Yaw = rot.Yaw, Roll = ACTION_BASE + code })
+            pc:ServerSetSpectatorLocation({ X = loc.X, Y = loc.Y, Z = loc.Z }, wire)
         end)
         if ok then sent = sent + 1 end
     end

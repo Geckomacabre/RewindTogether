@@ -10,7 +10,8 @@ AND the same version of the game. If one of you auto-updated Retro
 Rewind and the other did not, you will not be able to connect --
 Unreal refuses mismatched builds.
 
-Check with:  rt.status   in the UE4SS console.
+Check with:  rt.status   in the game's console (press ~ twice,
+type it, press Enter), or the launcher's Play tab.
 
 
 CHANGES IN 1.7.0  -  tested on two copies of the game at
@@ -82,6 +83,305 @@ CHANGES IN 1.7.0  -  tested on two copies of the game at
     again after the fix below: a guest took a tape off the
     rack and put it back, and both screens show it in its
     slot.
+    Verified since, each on two copies, with the fixes below:
+      - the till: a guest rang up a card customer (5 tapes
+        scanned, +$75.25) and a cash one ($25.00 taken for a
+        $21.00 bill, $4.00 counted out of the drawer, Space
+        to close it), then left the register with W;
+      - build mode (V): a guest packed a standee into a box,
+        carried it and set it down where they aimed;
+      - the skin tool (B): a guest re-skinned the carpet and
+        a shelf from the game's own picker on their screen;
+      - selling (K): a packed standee sold for $10.00 on both
+        HUDs;
+      - end of day: the host closed up, the guest stayed
+        connected through the summary and into day 2 with the
+        clock, the day and the money following.
+
+  * FIXED: every guest action reached the host looking dead
+    level. UE4SS fills an FRotator parameter from a Lua table
+    by the name table's casing, which on this build is "pitch"
+    (lower case), "Yaw", "Roll" - so the { Pitch = .. } the mod
+    built arrived as pitch 0. Measured: SetControlRotation
+    with Pitch = -30 set 0, with pitch = -30 set -30. A guest
+    could take what was at eye height and nothing on the
+    floor (a standee two metres away stayed put); the sun
+    copied to a guest sat on the horizon. UE.rotArg passes
+    both casings, everywhere a rotator goes in.
+
+  * FIXED: anything spawned during play never reached a guest.
+    The host's replication sweep wrote bReplicates = true into
+    an actor and only then called SetReplicates(true) - which
+    registers an actor with the network only when it sees the
+    flag change. Measured: the box a guest's furniture was
+    packed into sat on the host with bReplicates = true and
+    never appeared on the guest; one SetReplicates(false) and
+    (true) put it on the guest's screen at once. SetReplicates
+    now runs first.
+
+  * FIXED: a guest saw the level's default store - wood walls,
+    a black ceiling, a grey carpet, a blue counter - instead of
+    the host's blue walls and starry ceiling and carpet. Walls,
+    floors, ceilings and the counter take their look from two
+    replicated numbers, but only the save loader turns them
+    into a mesh and materials, and a guest never loads the
+    save (three of the 102 walls had the wrong numbers too).
+    skinsync.lua: the host sends every skinned object's numbers
+    (walls, shelves, signs, posters...) and the guest applies
+    them the way the save loader does; a skin changed later
+    reaches every guest the same way. Measured: the guest's
+    store matched the host's within two seconds of joining.
+
+  * NEW: the till works for a guest. Three things stopped it,
+    read off the register's Blueprint: its "can this player
+    use me" check reads a flag only a local controller sets;
+    its glide into the register moves "player 0" on a
+    timeline after the guest's action has returned - the host
+    (it would have dragged the host to the till); and W and
+    Space are the machine's own bindings, which the host never
+    heard. Now the host puts a guest who clicks the register
+    at the till itself, stops the glide (the guest's own game
+    glides the guest's camera) and tells the guest's game to
+    follow; Space and leaving with W are sent to the host. The
+    cash drawer and its change display are mirrored to the
+    guest - on the guest it had stayed shut, 35 cm from where
+    the host looked for the bills. Leaving the register put a
+    guest at the world origin (the exit spot is projected
+    onto the navigation mesh, which only the host has); the
+    guest is put at the register's exit instead. The host's
+    HUD no longer keeps the till's "LEAVE THE REGISTER" hint.
+
+  * NEW: the skin tool works for a guest. The picker opens
+    through the GameMode, which a guest does not have; for the
+    length of the click the HUD stand-in also answers the
+    clicked object's own skin code, so the game's picker opens
+    on the guest's screen. What the guest picks is made on the
+    host too and reaches everyone through skinsync.lua (the
+    stand-in had left the skin picker out because a guest
+    would have re-skinned things only they could see).
+    Changing a shelf's model, as opposed to its colours, is not
+    available to guests yet.
+
+  * FIXED: the host's HUD kept the old money after a guest
+    sold something (the replay hides the host's HUD from the
+    game, and Change Money then skips the HUD). The host's HUD
+    is given the new money and XP after each guest action.
+
+  * FIXED: a guest's toolbar kept showing the move tool after
+    placing or selling furniture - the host puts the guest
+    back on the hand tool, and a guest's tool is not
+    replicated. Each guest is now told its tool. (The mouse
+    wheel's tool switching is still not sent to the host; the
+    host's tool wins a second later.)
+
+  * FIXED: the host saw a guest's red furniture preview wherever
+    the guest aimed. It is hidden on the host. (The guest sees
+    their own now - see below.)
+
+  * End of day with a guest connected: nothing in it travels,
+    so the guest is never dropped. While the summary is up on
+    the host, guests' presses are not replayed: the game makes
+    the front door usable again a few seconds in, and a guest
+    shutting it would start a second end of the day.
+
+  * NEW: a guest sees the end of the day. When the host closes
+    the store, the host's summary - the day's rentals, sales,
+    earnings, then the XP page - goes up on the guest's screen
+    too, filled in with the host's figures (its buttons do
+    nothing on a guest). It closes when the host starts the
+    next day, and the game's new-day banner follows with the
+    host's day and season (dayend.lua). MEASURED: the same
+    statistics on both screens, the same XP page, and "WINTER
+    DAY 2" playing in the same frame on both.
+
+  * FIXED: every shelf title on a guest read "Default Text",
+    and so did the store's text signs. A title (ShelveTitle_C)
+    shows the genre, a special tag and "empty" that its shelf
+    works out from the tapes in its containers, and which tape
+    sits in which container is never replicated; a sign
+    (TextSign_C) keeps its words in a variable that is not
+    replicated either. The host now sends both with the skins,
+    matched by place (and facing - a double-sided shelf has a
+    title at each side of one spot); the guest calls the
+    title's own Update Material and the sign's Update Text.
+    MEASURED: 73 of 73 titles the same on both machines, 6 of
+    6 signs showing the host's words (none before).
+
+  * NEW: a guest sees the register's screen as the host's -
+    the bill (member, every line with its price and tag, the
+    total), the desktop with the store's name and date, the
+    screensaver when nobody is at it. The screen is a capture
+    of a widget the scanner and the customer fill on the host.
+    The host sends the page and the lines; the guest builds
+    the same lines in its own widget and captures it again.
+    MEASURED: the same bill on both screens, with the guest at
+    the till and with the host ringing up.
+
+  * NEW: the change a guest counts onto the counter shows on
+    every screen. Each bill or coin is an actor the drawer
+    spawns on the host, from a class that does not replicate;
+    those (only those - the drawer's stacks exist everywhere
+    already) are made to replicate. MEASURED: $10 and $5
+    bills on the guest's counter, gone again when taken back.
+
+  * NEW: a guest carrying furniture sees where it will land -
+    the see-through preview, green or red, with the game's own
+    hint ("THROW" where it cannot go). The pick-up runs on the
+    host, and the guest's own pawn cannot work the preview out:
+    the box answers from what it holds, which is never
+    replicated. The host sends the preview's mesh, footing,
+    footprint and rotation; the guest's pawn runs its own
+    preview every frame with the furniture's class defaults,
+    after the same "is there anything else to use here"
+    question the host asks before it places. Turning the
+    furniture with the mouse wheel turns it on the host too.
+    Config.GuestBuildPreview = false turns it off.
+    MEASURED: a shelf packed by the guest, the guest's preview
+    green at 1320,-1700 facing -90 - the host placed it at
+    1320,-1700 facing -90. Aimed close at a wall, the guest saw
+    no preview, and the host threw the box. (Before that check
+    the guest saw green at a spot where the host threw it.)
+
+  * FIXED: customers handed a guest their basket at the till
+    instead of money. The cash a customer holds out is an
+    actor the pay task spawns into its hand on the host, from
+    a class that does not replicate - it is made to replicate
+    now. And the basket is hidden by a function that runs on
+    the host only; the guest now runs the same function when
+    the host's customer puts it away. MEASURED, the guest at
+    the till: the customer's cash at 1617,-1510,114 in her hand
+    on both machines (the guest's a replicated copy), her
+    basket hidden on both; the bills in her hand on both
+    screens. Customers still shopping carry their baskets on
+    both.
+
+  * FIXED: writing a text (FText) property from Lua overran it
+    by 8 bytes on this build (UE4SS writes 0x18, the game's
+    FText is 0x10) and wrote over whatever came next. It had
+    been happening to the store sign's name on every guest
+    since the sign was first synced. MEASURED: an end-of-day
+    row's font size became 4.98e+20 and the row vanished; a
+    text sign's command pointers were garbage. Every text is
+    now set through KismetSystemLibrary's SetTextPropertyByName.
+
+  * FIXED, and it was the worst one: a guest could not walk.
+    A player's own character must be, on their own machine,
+    the copy that moves by their input and sends its moves to
+    the host (an "autonomous proxy"). The mod's replication
+    pass called SetReplicates(true) on every player character,
+    and on this engine that call also resets the character to
+    a plain "simulated proxy" - every time, even when it was
+    replicating already. From then on the guest's own
+    character ignored their movement keys and the host never
+    heard where they went: the host saw the guest's body
+    standing where they had joined ("there is no guest pawn").
+    SetReplicates now only starts actors replicating, and a
+    guest's character that is not theirs to move is put back.
+    MEASURED, two copies: the guest's character an autonomous
+    proxy after joining; the guest walked 311 units and jumped,
+    and the host's copy stood exactly where the guest did
+    (2184,-147 on both).
+
+  * FIXED: the host's copy of a guest could drift away from
+    the guest for good. The host does not correct a guest's
+    movement (that is what stops sprinting from jittering), but
+    it still worked out its own copy's position - so anything
+    one side bumped into and the other did not left the two
+    apart forever. The host now takes the guest's own position.
+    The host's own moves of a guest (where a guest is placed on
+    joining, rt.bring) reach the guest: for a moment the host
+    checks the guest again, then trusts them again. MEASURED: a
+    194-unit drift gone at the next step; the join placement and
+    rt.bring land the guest in the same spot on both screens.
+    Sprinting still does not jitter: a guest sprinting for two
+    seconds (every frame recorded) covered 994 units with no
+    step back, and the host's copy ended where the guest did;
+    with the host's corrections switched back on, the same
+    sprint was snapped back 33 times, by up to 85 units.
+
+  * FIXED: customers sometimes "bugged out and shook" on a
+    guest's screen. The snack display's boxes are built by the
+    display itself on every machine; the mod replicated the
+    host's as well, so a guest had two of each - and the
+    second set's buttons had collision where the host's had
+    none. A customer walking past climbed those invisible boxes
+    on the guest's screen, a metre up, and the host's position
+    pulled them back down, again and again. MEASURED with every
+    frame sampled: a customer's body jumping 100 units at the
+    display; with the fix, both machines have one set (4 boxes,
+    8 buttons) and a customer passing within 6 units of a
+    button walks level.
+
+  * NEW: a guest's conversations happen on the guest's screen.
+    Talking to the staff member (or a customer with a damaged
+    tape, the telephone) opened the dialog on the HOST's screen,
+    and could turn the host's camera. The host now keeps it off
+    its own screen, sends the guest the line and the answers,
+    and the guest answers with their own mouse; the game goes on
+    from the guest's answer. If the guest leaves mid-
+    conversation, it is ended. MEASURED: Adam's "Do you need to
+    talk to me, boss?" with its four answers on the guest's
+    screen only; "Never mind, keep working" closed it on both.
+    Config.GuestConversations = false turns it off.
+
+  * FOUND, avoided: a nil (or a Lua table) for a TSet parameter
+    corrupts a UE4SS call - the register's own "add a product"
+    function drew $0.00 at the wrong type, and the guest hung
+    half a minute later. The guest builds those lines itself.
+
+  * FIXED: film posters on a guest showed films of their own.
+    A poster frame's film is a number from the host's save
+    (or the player's pick), never replicated; with none, the
+    frame rolls a random film - which is what every guest's
+    did. The host now sends each poster's film with the shelf
+    titles, matched by place, and the guest's frame draws it
+    with its own function. MEASURED: 4 of 4 frames (wall,
+    small, standing) the same film and title on both; a
+    guest frame forced to roll a random film was given the
+    host's back within seconds.
+
+  * NEW: what NPCs say shows on a guest's screen. The line over
+    an NPC's head (a customer who cannot find a film, staff
+    with a problem, the till's "waiting" line) is filled by
+    two of the NPC's own events, which only the host's AI and
+    store logic call. The host now catches both and sends the
+    line; the guest shows it on its copy of that NPC through
+    the same speech widget. MEASURED: a customer's line over
+    her head on both screens, the same words, fully shown on
+    both.
+
+  * NEW: the end of day's level-up shows what the level
+    unlocked. The host's summary lists the unlocks the level
+    brings; a guest's copy never built that list (it reads it
+    through the GameMode). The host sends the list and the
+    guest makes the same unlock widgets, plus the game's
+    full-screen popup for a new movie genre. MEASURED: level 12
+    ("COTTON CANDY MACHINE", "REPAIR DESK") and level 13 (the
+    KID genre, with its popup) the same on both screens; the
+    guest's "start the next day" greyed out.
+
+  * FIXED: a guest's NPCs slid along without walking, bald,
+    with a grimace for a face, and every one of them showed a
+    thought bubble. An NPC only finishes building itself once
+    its start-up finds the GameMode, and a guest has none, so
+    on a guest it waited forever: its size stayed 0 (the walk
+    animation's speed is divided by it, so the walk froze),
+    its hair sat inside its body, its mouth and eyes never got
+    their materials, and the bubble the host hides at start
+    stayed up. The host now sends each NPC's size, walk rate,
+    hair and hair colour, mouth and eyes, eyelid height and,
+    for staff, the name on the badge; the guest puts the hair
+    on the head, shows the host's emotion on the face, and
+    shows a bubble only while the host's NPC has one, with its
+    icon, turned towards the guest. Measured on both screens:
+    the same feet swinging through a stride, the same hair,
+    the same angry face.
+
+  * FIXED: a guest's game spawned NPCs of its own - a dozen
+    within minutes, frozen at the town's spawn points, never
+    seen by the host. Its copy of the AI Director ran its
+    spawn timer like the host's; a guest now stops it and
+    removes what it made. Every real NPC comes from the host.
 
   * FIXED: things the host or a guest moved stayed where they
     were on a guest's screen - a tape put back on the shelf
@@ -98,12 +398,96 @@ CHANGES IN 1.7.0  -  tested on two copies of the game at
     off and applies the last position it was sent. After:
     397 of 397 tapes on the guest have it.
 
+  * FIXED: a guest crashed inside UE4SS a minute after two
+    UE4SS hot reloads, as it came back into the host's network
+    range (its log ended in "Bodies.tick", so the borrowed
+    bodies got the blame). The crash dump says otherwise. UE4SS
+    remembers every name a mod uses on an engine object by a
+    pointer into the Lua string, and never copies it; a hot
+    reload frees every such string, and the next time UE4SS
+    learned a new name and had to grow its table, it re-read
+    them all (UE4SS.dll+0x22ba30, the 513th name). Dressing the
+    host's re-created pawn simply used the most new names.
+    RewindNative.dll now empties that table when the mod starts
+    and stops (found and checked byte by byte; on another UE4SS
+    build it does nothing), and the mod never uses a name Lua
+    could throw away. Measured on two copies: four hot reloads,
+    670-710 dead names dropped in each, three trips out of range
+    and back - the host's pawn destroyed and made again under a
+    new name each time, dressed again, no crash. The native test
+    reproduces the old crash on a real table and shows the fix.
+
+  * FIXED: after a crash, the next launch could switch off the
+    wrong feature. Two copies on one PC share a folder, and the
+    crash note was one shared file: the copy still running
+    deleted it with its own next risky call, so only the HUD
+    stand-in's "on probation" note survived and took the blame.
+    Each running copy now keeps its own record of what it is
+    doing; the operation actually in flight is blamed; a feature
+    on probation only when nothing more specific was running;
+    and a hot reload is not mistaken for a crash. Measured: a
+    guest killed mid-operation with the stand-in on probation,
+    host still running - only the operation was switched off.
+    And closing the game is no longer mistaken for a crash: a
+    closed window, Steam's Stop or a killed copy left the same
+    note behind as a crash, so a feature still on probation was
+    switched off after a perfectly normal quit. The engine
+    writes a crash report before a crashing game dies; the mod
+    now looks for that report (for that very copy of the game)
+    before it switches anything off for an uncertain reason.
+    Measured: window closed, copy killed and restarted 8 s
+    later - nothing switched off; a real crash - still found.
+
+  * FIXED: a UE4SS hot reload on the host moved every guest
+    next to the host - once with the guest at the till, where
+    the game turns their collision off, and they fell out of
+    the world. Placement is for new arrivals only now, and
+    nothing teleports a character whose collision or movement
+    is switched off. Measured: four host reloads, guest left
+    where they were each time.
+
+  * Guest-side hardening found on the way: borrowed bodies keep
+    nothing of the engine's from one moment to the next (pawns,
+    meshes, donors and animations are found afresh), forget
+    players' old pawns, borrow only from the store's real NPC
+    classes, and no longer search every mesh in the engine for
+    a donor (15 ms, every 2 s). Nametags and the guest HUD no
+    longer keep engine objects either.
+
   * NEW: RewindNative.dll, a small native helper loaded by the
     Lua mod with package.loadlib. The game's Blueprints find
     "the player" with GetPlayerController(0) 410 times; on a
     listen server that is always the host. For the length of a
     replayed guest action those four functions answer with the
     guest (rt.native test: PASS). No UE4SS C++ SDK needed.
+
+  * NEW: a guest's HUD shows what they hold and what they look
+    at - the product panel ("RAIN WOMAN  MOVIE DRAMA"), the
+    button hints ("USE") and the hand cursor - exactly as the
+    host's does. Measured on two copies: picked up, swapped at
+    the rack, thrown to the floor (panel gone), left and
+    rejoined (re-armed), 19,823 HUD calls answered, no crash;
+    the host's own HUD never showed the guest's tape.
+    Why it was missing: the game draws all of that through its
+    GameMode, which a guest does not have. The HUD widget does
+    implement the interface those calls use, but every one of
+    its handlers is empty - only Core_Gamemode_C's handlers
+    forward to the widget. So RewindNative.dll (now version 2)
+    answers GetGameMode, on a guest, with Core_Gamemode_C's
+    class default object pointed at the guest's widget - and
+    ONLY for the HUD function library's calls that cast it to
+    the UI interface. The 51 Blueprint sites that cast it to
+    the GameMode, the skin picker and the mod's own Lua still
+    get nothing. Before every answer it checks, through UE4SS's
+    view of the object table, that both objects are still alive,
+    and it stands down on a map load.
+    Second half: a pick-up happens on the host, and on the
+    guest only its result arrives (the item on the hand). The
+    guest's pawn never ran "Set Object Hold", which is what
+    draws the panel, so the guest now mirrors its hand socket
+    into its own pawn. Config.GuestHudDetails = false turns
+    both off. native\RewindNative\build.bat now runs a native
+    test of these decisions before it builds the DLL.
 
   * NEW: joining from the main menu. No save of your own is
     needed; OpenLevel from the menu connects in ~2 s.
@@ -112,6 +496,29 @@ CHANGES IN 1.7.0  -  tested on two copies of the game at
     game, installs UE4SS and the mod, a mod manager, host/join
     buttons, Steam friends list, Steam-relay tunnel. The Steam
     parts need real two-account testing.
+
+  * NEW: one-click setup. Unzip, open the launcher - that is
+    the whole install. It backs up the saves, then installs
+    UE4SS (now inside the zip: no download) and the mod by
+    itself, and updates an older mod. If the game is open it
+    offers to close it, and finishes the moment the game
+    closes. HOST and JOIN do the same first, so friends are
+    always on the same version. The Setup line is one
+    sentence and at most one button. Started from inside the
+    zip, it says to extract the zip first. The port tools
+    moved into an Extras folder.
+
+  * FIXED: closing the game for setup when UE4SS's console
+    window was in front (1.6's installer turned it on): the
+    launcher closed only the console. It now closes the
+    game's own window. Checked on the real game: it quits in
+    about 1.5 s, saves untouched.
+
+  * DOCS: a fresh install has no UE4SS console window (the
+    pinned UE4SS ships with it off), so rt.* commands are now
+    documented in the game's own console: press ~ (or F10)
+    twice, type, Enter. Checked on the real game: rt.status
+    prints its report there. The mod's messages say the same.
 
   * The guest's world now matches the host's:
       - money, XP, level, store value (Core_Gamemode_C) and the

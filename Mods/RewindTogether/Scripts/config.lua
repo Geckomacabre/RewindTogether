@@ -2,7 +2,7 @@
     Rewind Together - user configuration
     ------------------------------------
     Edit the values below, then restart the game (or run `rt.reload` in the
-    UE4SS console) to apply. Every value has a safe default; if you break
+    game's console - press ~ twice) to apply. Every value has a safe default; if you break
     something, delete this file and reinstall.
 ]]
 
@@ -65,7 +65,7 @@ Config.Transport = "ip"
 -- correct all along - the guest dialled 7777 while the host sat on 27015.
 --
 -- If you ever need to check rather than trust this: host, then run
--- "CHECK CONNECTION - Double click me.bat". It reads the real socket.
+-- "Extras\CHECK CONNECTION - Double click me.bat". It reads the real socket.
 --
 -- Both players must have the same value here.
 Config.Port = 27015
@@ -282,6 +282,25 @@ Config.StateSyncHz = 4
 -- the host's GameMode ever builds it, so a guest otherwise has none.
 Config.GuestHud = true
 
+-- Guest only: on that HUD, also show what is in your hands and what you are
+-- looking at (the product panel, the button hints, the crosshair), as the
+-- host's does. The game draws those through its GameMode, which a guest does
+-- not have; RewindNative.dll stands in for it for exactly those calls and
+-- nothing else (hud.lua explains). rt.native shows whether it is on. Turn it
+-- off if a guest's HUD misbehaves - everything else keeps working.
+Config.GuestHudDetails = true
+
+-- Guest only: while you carry packed furniture, draw the see-through preview
+-- of where it will land, green or red, as the host sees theirs. The host
+-- tells your game what the furniture looks like; your own game draws it every
+-- frame (guestinput.lua, "Build mode"). Missing counts as on.
+Config.GuestBuildPreview = true
+
+-- Host: a conversation a guest starts (the staff member, a customer at the
+-- till, the telephone) goes up on that guest's screen, to be answered with
+-- their mouse - not on the host's (talksync.lua). Missing counts as on.
+Config.GuestConversations = true
+
 --------------------------------------------------------------------------
 -- Interaction forwarding
 --------------------------------------------------------------------------
@@ -342,7 +361,8 @@ Config.GuestInteractKey = "E"
 -- So the real fault is in constructing the component at all, and it is not
 -- the argument list. That is still unsolved. Until it is, this stays on.
 --
--- Chat and status print to the UE4SS console instead of on screen.
+-- Chat and status go to RewindTogether.log (the launcher's Diagnostics shows
+-- it) instead of on screen; rt.status in the game's console (~) shows status.
 Config.SafeMode = true
 
 Config.ShowNametags       = true

@@ -1,9 +1,11 @@
 --[[
     Rewind Together - console commands and keybinds
 
-    Commands are typed into the UE4SS console window (the black window that
-    opens alongside the game). Every command is prefixed "rt." so it cannot
-    collide with the game's own console.
+    Commands are typed into the game's own console: press ~ (or F10) twice,
+    type the command, press Enter (UE4SS's ConsoleEnablerMod, on by default,
+    switches it on). UE4SS's GUI console window takes them too, if a player
+    turned it on - a fresh install has none. Every command is prefixed "rt."
+    so it cannot collide with the game's own commands.
 ]]
 
 local Log         = require("log")
@@ -81,7 +83,7 @@ handlers["rt.host"] = function(_, dev)
     if Net.host() then
         out(dev, "Starting co-op session...")
         out(dev, "When the store has reloaded, the address to give your friend")
-        out(dev, "is printed above - or run CHECK CONNECTION.bat to see it.")
+        out(dev, "is printed above - or run Extras\\CHECK CONNECTION.bat to see it.")
     else
         out(dev, "Could not host: " .. tostring(Net.state.lastError or "unknown error"))
     end
@@ -172,7 +174,7 @@ handlers["rt.id"] = function(_, dev)
     -- silently dumps the guest back at the main menu - which is precisely the
     -- loop both players were stuck in.
     out(dev, "NOTE: friends cannot join by Steam ID on this build.")
-    out(dev, "Give them your IP instead - run CHECK CONNECTION.bat to get it.")
+    out(dev, "Give them your IP instead - run Extras\\CHECK CONNECTION.bat to get it.")
     return true
 end
 
@@ -408,9 +410,18 @@ handlers["rt.safety"] = function(params, dev)
         return true
     end
 
+    -- A crash with nothing risky in flight switches nothing off; it is still
+    -- worth being able to read back.
+    local phase = Safety.lastCrashPhase()
+    if phase then
+        out(dev, ("The game crashed last time while the mod was running: %s"):format(phase))
+        out(dev, "  (nothing risky of its own was in flight, so nothing was switched off)")
+    end
+
     local list = Safety.blockedList()
     if #list == 0 then
-        out(dev, "Nothing is switched off - no crash has been recorded.")
+        out(dev, phase and "Nothing is switched off."
+                 or "Nothing is switched off - no crash has been recorded.")
         return true
     end
 

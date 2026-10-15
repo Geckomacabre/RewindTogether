@@ -17,6 +17,23 @@ set "OUT=%~dp0..\..\Mods\RewindTogether\native"
 if not exist "%OUT%" mkdir "%OUT%"
 if not exist obj mkdir obj
 
+rem The native test first, when its source is here (the release does not ship
+rem it): the thunks run inside the Blueprint VM, where a wrong decision is a
+rem crash, so a build whose decisions fail the test is not made at all.
+if exist test_standin.cpp (
+  cl /nologo /O2 /MT /EHsc /W4 /std:c++17 /Fo"obj\\" /Fe"obj\test_standin.exe" test_standin.cpp /link /INCREMENTAL:NO
+  if errorlevel 1 exit /b 1
+  obj\test_standin.exe
+  if errorlevel 1 exit /b 1
+)
+rem The same for the UE4SS name-cache repair, which writes into UE4SS's memory.
+if exist test_namecache.cpp (
+  cl /nologo /O2 /MT /EHsc /W4 /std:c++17 /Fo"obj\\" /Fe"obj\test_namecache.exe" test_namecache.cpp /link /INCREMENTAL:NO
+  if errorlevel 1 exit /b 1
+  obj\test_namecache.exe
+  if errorlevel 1 exit /b 1
+)
+
 rem /MT: static CRT, so the DLL needs nothing installed beyond what the game has.
 cl /nologo /LD /O2 /MT /EHsc /W4 /std:c++17 /Fo"obj\\" RewindNative.cpp ^
    /link /OUT:"%OUT%\RewindNative.dll" /IMPLIB:obj\RewindNative.lib /PDB:obj\RewindNative.pdb /DEBUG /INCREMENTAL:NO /OPT:REF /OPT:ICF

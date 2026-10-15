@@ -74,6 +74,12 @@ local function claimSlot()
     return nil
 end
 
+-- Every snippet ever compiled, kept. Its member names (x.Mesh, x:Possess())
+-- are constants of the chunk; UE4SS remembers each name by a pointer into
+-- that string, so a collected chunk would leave it pointing at freed memory
+-- (ue.lua, UE.pin). Dev only, a few kilobytes a session.
+local kept = {}
+
 local function runLua(code)
     local out = {}
     local env = setmetatable({
@@ -88,6 +94,7 @@ local function runLua(code)
         out[#out + 1] = "compile error: " .. tostring(err)
         return out
     end
+    kept[#kept + 1] = chunk
     local res = table.pack(pcall(chunk))
     if not res[1] then
         out[#out + 1] = "error: " .. tostring(res[2])
@@ -100,6 +107,10 @@ end
 local function handle(line)
     local id, body = line:match("^@(%S+)%s+(.*)$")
     if not id then id, body = "-", line end
+
+    -- In the crash record (safety.lua): this runs before the tick's first
+    -- phase, where it would otherwise read as the engine's own time.
+    require("safety").phase("dev bridge: " .. body:sub(1, 60))
 
     local lines
     if body:sub(1, 4) == "lua " then

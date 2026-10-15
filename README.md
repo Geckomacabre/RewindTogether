@@ -9,9 +9,12 @@ Version 1.7.0 · for Retro Rewind Steam build 23896268 ("Changelist 2308") · Wi
 
 ## Quick start
 
-1. Download and unzip **Rewind Together**.
-2. Run **`RewindTogetherLauncher.exe`**. It finds Retro Rewind, installs the UE4SS
-   loader if you don't have it, and installs the mod. Your saves are backed up first.
+1. Download **Rewind Together**, right-click the zip and choose **Extract All...**
+2. Open **`RewindTogetherLauncher.exe`** from the unzipped folder. That's the whole install:
+   it finds Retro Rewind, backs up your saves, and installs the UE4SS loader and the mod by
+   itself (both come in the zip, so nothing is downloaded). If the game is open, it offers
+   to close it first. If Windows shows "Windows protected your PC", click **More info**,
+   then **Run anyway** (the exe isn't code-signed).
 3. **Hosting:** press **HOST MY STORE**, pick your save in the game as usual, and walk into
    your store. It opens to friends by itself.
 4. **Joining:** on the **Visit a friend** side, pick a friend whose store is open, or use
@@ -19,7 +22,8 @@ Version 1.7.0 · for Retro Rewind Steam build 23896268 ("Changelist 2308") · Wi
    main menu. You don't need a save of your own.
 
 Everyone needs the same version of the mod and the same version of the game. If Steam
-updates Retro Rewind, wait for a mod update before playing together.
+updates Retro Rewind, wait for a mod update before playing together. To update the mod,
+unzip the new download and open its launcher: it updates the mod by itself.
 
 ---
 
@@ -31,14 +35,27 @@ host's shelves, stock, decorations, expansions and sign exactly as the host does
 **Guests can work the store.** Right-click picks up and uses things, left-click places
 them, and E, V, B and K switch tools and sell, just like in single player. A guest's
 actions are carried out on the host's game, so the result is identical on every screen.
-Taking a tape off a shelf and putting it back has been verified in game, on both screens.
+Verified in game, on both screens:
+- taking a tape off a shelf and putting it back, with the item and its details on the
+  guest's own HUD;
+- **ringing customers up at the till**: the register's screen, the bill, the customer's
+  cash and the change on the counter;
+- **build mode**: packing furniture and placing it, with the guest's own green/red
+  placement preview;
+- **the skin tool**: picking colours for the carpet and the shelves;
+- **talking to the staff member**: the conversation opens on the guest's screen and the
+  guest answers it (other conversations, such as a customer's, take the same path but
+  were not each tried).
 
 **The rest of the world matches too:**
 - **Money, XP, level and the clock**, on the guest's own HUD.
 - **Day, weekday, season and weather**, including the season scenery (snow, bare trees).
 - **The sky, sun, fog and street lighting.**
-- **The town's customers and passers-by:** their looks (body, clothes, colours, hair)
-  and their animation.
+- **The town's customers and passers-by:** their looks (body, clothes, colours, hair),
+  their animation, what they say, and the basket or cash in their hands.
+- **Shelf titles, the signs you wrote and the film posters.**
+- **The end of the day:** the host's summary, the XP bar and the level-up unlocks, then
+  the new-day banner.
 
 **Only the host saves.** Guests' own saves are never read or written.
 
@@ -50,7 +67,7 @@ Taking a tape off a shelf and putting it back has been verified in game, on both
 |---|---|---|
 | Same house / LAN | none: *Join by address*, the host's local IP | works |
 | VPN (Tailscale, ZeroTier, Radmin) | both join the same VPN, then *Join by address* | works (how the mod was first tested) |
-| Port forward (UDP 27015) | `OPEN PORT FOR FRIENDS - Double click me.bat` on the host | works if your router allows it |
+| Port forward (UDP 27015) | `Extras\OPEN PORT FOR FRIENDS - Double click me.bat` on the host | works if your router allows it |
 | Steam (friends list / *Join Game*) | nothing: the launcher carries the game over Steam's relay | **new in 1.7.0, needs real-world testing - please report** |
 
 Hosting always uses UDP port **27015**; the mod sets it when it opens your store, and it
@@ -64,9 +81,11 @@ cannot be changed.
 |---|---|
 | **F7** | Host: open your store to friends (the launcher does this for you) |
 | **F5** | Join `Config.JoinTarget` or a hosting friend |
-| **F6** | Status (printed in the UE4SS console) |
+| **F6** | Status, written to `RewindTogether.log` (the launcher's Diagnostics shows it) |
 
-The UE4SS console (the black window next to the game) takes these commands:
+The game's own console takes these commands: press **~** twice (or **F10** twice) to open
+it, type the command, press **Enter**; press **~** once more to close it. (UE4SS's GUI
+console window takes them too, if you have turned it on. A fresh install doesn't show one.)
 
 | Command | What it's for |
 |---|---|
@@ -80,15 +99,14 @@ The UE4SS console (the black window next to the game) takes these commands:
 
 ## Known limitations (1.7.0)
 
-- **The guest's HUD doesn't yet show the item in your hands or the "look at" details.**
-  The item itself is in your hands and works; only the panel is missing. Money, the clock
-  and XP do show.
 - **A guest's own game also runs each click locally.** You may occasionally see an object
   jump for a moment before the host's version arrives. The host's version always wins.
 - **The host decides end of day.** Closing up and starting a new day happen on the
-  host's game, and guests follow.
-- **Build mode, the skin tool and the mesh tool are untested for guests.** Stocking,
-  picking up and placing are the tested paths.
+  host's game, and guests follow (the guest sees the summary; its buttons are the host's).
+- **Guests can't change a shelf's model** (the mesh tool). Colours (the skin tool) work.
+- **The mouse wheel's tool switching isn't sent to the host;** use E, V and B.
+- **Tested with two copies of the game on one PC.** Two players on two PCs over the
+  internet, and the Steam route in particular, still need real-world testing.
 - **NPC clothes and colours match the host's; their exact walking paths are the host's
   NPC positions,** so a customer can briefly look slightly different the moment it
   appears.

@@ -7,13 +7,23 @@
 STEP 1  -  INSTALL  (once)
 --------------------------
 
-  Unzip this folder anywhere and run:
+  1. Right-click the zip > "Extract All...".
+     (Running it from inside the zip does not work.)
 
-      RewindTogetherLauncher.exe
+  2. Open the unzipped folder and double-click:
 
-  It finds Retro Rewind, installs what is missing (the UE4SS
-  loader and this mod) and backs up your saves first.
-  Nothing to edit, no IDs to swap.
+         RewindTogetherLauncher.exe
+
+     If Windows says "Windows protected your PC", click
+     "More info", then "Run anyway".
+
+  That is all. The launcher finds Retro Rewind, backs up your
+  saves, and installs everything by itself (the UE4SS mod
+  loader and this mod) - no download, nothing to edit.
+  If the game is open, it offers to close it first.
+
+  Got a newer zip later? Unzip it and open its launcher: it
+  updates the mod by itself.
 
 
 STEP 2  -  PLAY
@@ -46,10 +56,15 @@ THINGS TO KNOW
     left-click places, E / V / B switch tools, K sells.
 
   * Both of you need the same mod version AND the same game
-    version. The launcher shows both.
+    version. The launcher shows both on its Play tab.
 
-  * A black UE4SS window opens next to the game. That is
-    normal - leave it open.
+  * The Extras folder is only for playing without Steam's
+    connection. You do not need it.
+
+  * If someone asks you to type a command (they all start
+    with rt., like rt.status): in the game, press ~ twice
+    (or F10 twice) to open its console, type it, press Enter.
+    Press ~ again to close the console.
 
 
 IF IT DOES NOT WORK
@@ -59,5 +74,5 @@ IF IT DOES NOT WORK
      that to whoever gave you the mod.
   2. If the game ever crashes, just start it again. The mod
      notes what it was doing, switches that one feature off on
-     the next launch and tells you which (type rt.safety in the
-     black window).
+     the next launch and tells you which (rt.safety in the
+     game's console, or the log in the launcher's DIAGNOSTICS).

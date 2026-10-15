@@ -40,6 +40,32 @@ public static class Ue4ssSetup
 
     private static readonly string[] ProxyNames = { "dwmapi.dll", "xinput1_3.dll", "d3d11.dll", "dxgi.dll", "version.dll" };
 
+    /// <summary>
+    /// Where the release zip carries the pinned UE4SS zip, unmodified (it holds UE4SS's own MIT
+    /// LICENSE): Mods\UE4SS\UE4SS_v3.0.1-944-g0196ef29.zip next to the exe. Installing from it
+    /// needs no internet and does not depend on GitHub keeping the "experimental" tag.
+    /// </summary>
+    public static string BundledZipPath(string exeDir) => Path.Combine(exeDir, "Mods", "UE4SS", PinnedFileName);
+
+    /// <summary>The bundled UE4SS zip if it is there and is exactly the pinned file, else null.</summary>
+    public static string? FindBundledZip(string? exeDir)
+    {
+        if (string.IsNullOrWhiteSpace(exeDir)) return null;
+        string path = BundledZipPath(exeDir);
+        try
+        {
+            var fi = new FileInfo(path);
+            if (!fi.Exists) return null;
+            if (fi.Length == PinnedSize && Hashing.Matches(Hashing.Sha256OfFile(path), PinnedSha256)) return path;
+            Log.Warn($"Ignoring {path}: it is not the pinned UE4SS build (damaged or replaced download?).");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Log.Warn($"Ignoring {path}: {ex.Message}");
+        }
+        return null;
+    }
+
     /// <summary>Files from the zip that are never overwritten if the player already has them.</summary>
     private static readonly string[] KeepIfPresent = { "ue4ss/UE4SS-settings.ini", "ue4ss/Mods/mods.txt", "ue4ss/Mods/mods.json" };
 
@@ -150,7 +176,7 @@ public static class Ue4ssSetup
             .Where(e => !e.FullName.EndsWith('/') && !KeepIfPresent.Contains(e.FullName.Replace('\\', '/'), StringComparer.OrdinalIgnoreCase))
             .Select(e => Path.GetFullPath(Path.Combine(win64, e.FullName.Replace('\\', '/'))));
         if (FileTransaction.FindFileInUse(overwritten) is { } busy)
-            throw new GameFilesLockedException("press Install UE4SS again", busy);
+            throw new GameFilesLockedException("press Set up again", busy);
 
         int written = 0;
         foreach (var e in zip.Entries)
@@ -173,7 +199,7 @@ public static class Ue4ssSetup
             }
             catch (IOException ex) when (FileTransaction.IsInUse(ex))
             {
-                throw new GameFilesLockedException("press Install UE4SS again", dest, ex);
+                throw new GameFilesLockedException("press Set up again", dest, ex);
             }
             catch (IOException ex)
             {

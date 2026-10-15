@@ -46,7 +46,7 @@ public sealed class SaveSlotOption : ObservableObject
 }
 
 /// <summary>
-/// The Play tab: setup checklist, HOST and JOIN, and the live session display. Owns the Steam
+/// The Play tab: the setup line, HOST and JOIN, and the live session display. Owns the Steam
 /// helper process for the session (see SteamAgent for why it is a separate process).
 /// </summary>
 public sealed class PlayViewModel : ObservableObject, IDisposable
@@ -81,11 +81,7 @@ public sealed class PlayViewModel : ObservableObject, IDisposable
         JoinSteamIdCommand = new AsyncCommand(JoinSteamIdAsync, () => !FriendsLoading);
         JoinFriendCommand = new AsyncCommand(p => p is FriendItem f ? JoinSteamAsync(f.Info.Id, f.Name) : Task.CompletedTask, _ => !FriendsLoading);
         InviteFriendCommand = new RelayCommand(p => Invite(p as FriendItem), _ => _agent?.IsRunning == true && _session == SessionKind.Host);
-        InstallUe4ssCommand = new AsyncCommand(async () => await _main.InstallUe4ssAsync());
-        RtActionCommand = new AsyncCommand(RewindTogetherActionAsync);
-        RtFromZipCommand = new AsyncCommand(async () => { if (_main.PickModFile() is { } p) await _main.InstallPackageAsync(p, null, "file"); });
-        RtFromFolderCommand = new AsyncCommand(async () => { if (_main.PickModFolder() is { } p) await _main.InstallPackageAsync(p, null, "folder"); });
-        BrowseGameCommand = new AsyncCommand(_main.BrowseForGameAsync);
+        SetupCommand = new AsyncCommand(SetupAsync);
         ToggleOtherWaysCommand = new RelayCommand(() => OtherWaysOpen = !OtherWaysOpen);
         _joinAddress = main.Settings.LastJoinAddress ?? "";
         _joinSteamId = main.Settings.LastJoinSteamId ?? "";
@@ -120,132 +116,93 @@ public sealed class PlayViewModel : ObservableObject, IDisposable
         }
     }
 
-    // ================================================================== setup checklist
+    // ================================================================== setup strip
 
-    private string _gameText = "", _ue4ssText = "", _ue4ssAction = "", _rtText = "", _rtAction = "", _buildWarning = "";
-    private bool _gameOk, _ue4ssOk, _rtOk;
+    // One line and at most one button: the launcher does the steps itself (MainViewModel.SetUpAsync).
+    private string _setupText = "", _setupDetail = "", _setupButton = "", _setupTone = "idle", _setupIcon = "", _buildWarning = "";
 
-    public bool GameOk { get => _gameOk; private set => Set(ref _gameOk, value); }
-    public string GameText { get => _gameText; private set => Set(ref _gameText, value); }
-    public bool Ue4ssOk { get => _ue4ssOk; private set => Set(ref _ue4ssOk, value); }
-    public string Ue4ssText { get => _ue4ssText; private set => Set(ref _ue4ssText, value); }
-    public string Ue4ssAction { get => _ue4ssAction; private set => Set(ref _ue4ssAction, value); }
-    public bool RtOk { get => _rtOk; private set => Set(ref _rtOk, value); }
-    public string RtText { get => _rtText; private set => Set(ref _rtText, value); }
-    public string RtAction { get => _rtAction; private set => Set(ref _rtAction, value); }
+    public string SetupText { get => _setupText; private set => Set(ref _setupText, value); }
+    public string SetupDetail { get => _setupDetail; private set => Set(ref _setupDetail, value); }
+    /// <summary>The one button's caption; empty hides it.</summary>
+    public string SetupButton { get => _setupButton; private set => Set(ref _setupButton, value); }
+    public string SetupTone { get => _setupTone; private set => Set(ref _setupTone, value); }
+    public string SetupIcon { get => _setupIcon; private set => Set(ref _setupIcon, value); }
     public string BuildWarning { get => _buildWarning; private set => Set(ref _buildWarning, value); }
-    public bool SetupComplete => GameOk && Ue4ssOk && RtOk;
+    public bool SetupComplete => _main.Game != null && _main.ModReady;
 
-    public ICommand InstallUe4ssCommand { get; }
-    public ICommand RtActionCommand { get; }
-    public ICommand RtFromZipCommand { get; }
-    public ICommand RtFromFolderCommand { get; }
-    public ICommand BrowseGameCommand { get; }
+    public ICommand SetupCommand { get; }
 
     public void RefreshSetup()
     {
         var g = _main.Game;
-        GameOk = g != null;
-        GameText = g == null
-            ? "Retro Rewind was not found. Point the launcher at it with Browse."
-            : $"Retro Rewind found{(g.BuildId != null ? $" (build {g.BuildId})" : "")}";
-
-        var ue = _main.Ue4ss;
-        Ue4ssOk = ue?.State == Ue4ssState.Installed;
-        Ue4ssText = ue == null ? "UE4SS mod loader" : ue.Summary;
-        Ue4ssAction = g == null || Ue4ssOk ? "" : ue?.State == Ue4ssState.NotInstalled ? "Install UE4SS" : "Repair UE4SS";
-
         var rt = _main.RewindTogether;
-        // Where an install/update comes from: the copy shipped next to the exe wins; else the catalog.
-        var bundled = _main.Bundled;
-        var entry = _main.Mods.Catalog?.Find(GameInstall.RewindTogetherId);
-        string? available = bundled?.Version ?? (entry is { IsInstallable: true } ? entry.Version : null);
-        string availableFrom = bundled != null ? "comes with this launcher" : "is available";
+        var plan = _main.CurrentPlan;
+        string? installed = rt is { Installed: true } ? rt.Version ?? "" : null;
+        bool running = _main.GameRunning;
 
-        RtOk = rt is { Installed: true, HasMainLua: true } && rt.EnabledInModsTxt != false;
-        if (g == null || rt == null) { RtText = "Rewind Together co-op mod"; RtAction = ""; }
-        else if (!rt.Installed)
+        void Show(string tone, string text, string detail, string button)
         {
-            RtText = "Rewind Together is not installed.";
-            RtAction = bundled != null ? $"Install Rewind Together {bundled.Version}" : "Install Rewind Together";
+            SetupTone = tone;
+            SetupIcon = tone switch { "ok" => "✔", "bad" => "✖", "info" => "…", _ => "!" };
+            SetupText = text;
+            SetupDetail = detail;
+            SetupButton = button;
         }
-        else if (!rt.HasMainLua) { RtText = "Rewind Together is damaged (Scripts\\main.lua is missing)."; RtAction = "Reinstall"; }
-        else if (rt.EnabledInModsTxt == false) { RtText = $"Rewind Together {rt.Version} is installed but switched off."; RtAction = "Switch it on"; }
-        else if (available != null && VersionCompare.IsNewer(available, rt.Version))
+
+        if (g == null)
+            Show("bad", "Retro Rewind was not found.",
+                "Show the launcher where it is installed (in Steam: right-click Retro Rewind > Manage > Browse local files).", "Find the game...");
+        else if (_main.SettingUp)
+            Show("info", "Setting up Rewind Together...", plan.Describe(installed), "");
+        else if (plan.NothingToDo)
+            Show("ok", $"Ready to play: Rewind Together {rt?.Version} is installed.",
+                $"Retro Rewind{(g.BuildId != null ? $" build {g.BuildId}" : "")} · {_main.Ue4ss?.Summary}", "");
+        else if (plan.InstallMod && plan.ModVersion == null && _main.RunningFromZipPreview)
+            Show("bad", "Unzip the download first.", MainViewModel.UnzipFirstText, "");
+        else if ((plan.InstallUe4ss || plan.InstallMod) && running)
+            Show("warn", "Close Retro Rewind to finish setting up - the launcher does the rest by itself.",
+                "Still to do: " + plan.Describe(installed), "Close the game and set up");
+        else if (plan.InstallMod && plan.ModVersion == null && !plan.InstallUe4ss)
+            Show("warn", installed == null ? "Rewind Together is not installed." : "Rewind Together needs reinstalling.",
+                "Pick the Rewind Together zip you downloaded, and the launcher installs it.", "Choose the zip...");
+        else
         {
-            RtText = $"Rewind Together {rt.Version ?? "(unknown version)"} - version {available} {availableFrom}.";
-            RtAction = $"Update to {available}";
+            bool damaged = rt is { Installed: true, HasMainLua: false };
+            bool update = plan.InstallMod && !damaged && installed != null;
+            string text = installed == null || plan.InstallUe4ss ? "One click to set up Rewind Together."
+                : damaged ? "Rewind Together is damaged - one click repairs it."
+                : update ? (_main.Bundled != null ? "A Rewind Together update came with this launcher." : $"Rewind Together {plan.ModVersion} is available.")
+                : "Rewind Together is switched off.";
+            string button = !plan.InstallUe4ss && !plan.InstallMod ? "Switch it on"
+                : !plan.InstallUe4ss && update && plan.ModVersion != null ? $"Update to {plan.ModVersion}"
+                : "Set up Rewind Together";
+            string detail = !plan.InstallUe4ss && !plan.InstallMod
+                ? "It is turned off in UE4SS's mod list, so the game will not load it. HOST and JOIN switch it back on too."
+                : plan.Describe(damaged ? null : installed);
+            Show("warn", text, detail, button);
         }
-        else { RtText = $"Rewind Together {rt.Version ?? ""} is installed."; RtAction = ""; }
 
         BuildWarning = rt?.BuildWarning(g?.BuildId) ?? "";
         Raise(nameof(SetupComplete));
     }
 
-    private async Task RewindTogetherActionAsync()
-    {
-        var g = _main.Game;
-        var rt = _main.RewindTogether;
-        if (g == null) return;
-        if (rt is { Installed: true, HasMainLua: true } && rt.EnabledInModsTxt == false)
-        {
-            ModsTxt.Update(g.ModsTxt, t => t.SetEnabled(GameInstall.RewindTogetherFolder, true));
-            ModsJson.SetEnabled(g.ModsJson, GameInstall.RewindTogetherFolder, true);
-            _main.RefreshInstallState();
-            _main.Notify(GameProcess.IsRunning(g) ? "Rewind Together switched on. Restart the game for it to load." : "Rewind Together switched on.", "ok");
-            return;
-        }
-        await InstallRewindTogetherAsync();
-    }
-
-    private async Task<bool> InstallRewindTogetherAsync()
-    {
-        // 1. the copy shipped next to the launcher - no download, no prompt
-        if (_main.Bundled is { } bundled) return await _main.InstallPackageAsync(bundled.Folder, null, "bundled");
-        // 2. the catalog
-        var entry = _main.Mods.Catalog?.Find(GameInstall.RewindTogetherId);
-        if (entry is { IsInstallable: true }) return await _main.InstallFromCatalogAsync(entry);
-        // 3. ask for the zip
-        bool pick = await _main.AskAsync("Choose the Rewind Together download",
-            "Pick the Rewind Together zip you downloaded (for example from Nexus Mods). The launcher installs it into the game, " +
-            "keeps your settings, and switches it on.", "Choose the zip...", "Cancel", "info");
-        if (!pick) return false;
-        string? path = _main.PickModFile();
-        return path != null && await _main.InstallPackageAsync(path, null, "file");
-    }
-
-    /// <summary>Everything a session needs, offering to fix what is missing. False = not ready.</summary>
-    private async Task<bool> EnsureReadyAsync(bool needSteam)
+    private async Task SetupAsync()
     {
         if (_main.Game == null)
         {
-            if (!await _main.AskAsync("Retro Rewind was not found",
-                    "The launcher could not find Retro Rewind in your Steam libraries. Show it where the game is installed.",
-                    "Browse...", "Cancel", "warn"))
-                return false;
+            // Finding the game sets up everything it can by itself; the line then shows what is left.
             await _main.BrowseForGameAsync();
-            if (_main.Game == null) return false;
+            return;
         }
-        if (_main.Ue4ss?.State != Ue4ssState.Installed)
-        {
-            if (!await _main.AskAsync("One-time setup: UE4SS",
-                    "Rewind Together runs inside UE4SS, a free mod loader for Unreal games. It is not installed yet.\n\n" +
-                    $"The launcher can download it from its official GitHub page (about 7 MB) and set it up for you.",
-                    "Install UE4SS", "Cancel", "info"))
-                return false;
-            if (!await _main.InstallUe4ssAsync()) return false;
-        }
-        if (_main.RewindTogether is not { Installed: true, HasMainLua: true })
-        {
-            if (!await InstallRewindTogetherAsync()) return false;
-        }
-        if (_main.RewindTogether?.EnabledInModsTxt == false)
-        {
-            if (!await _main.AskAsync("Rewind Together is switched off",
-                    "Rewind Together is installed but turned off in UE4SS's mod list. Switch it on?", "Switch on", "Cancel", "warn"))
-                return false;
-            await RewindTogetherActionAsync();
-        }
+        await _main.SetUpAsync(MainViewModel.SetupTrigger.Button);
+    }
+
+    /// <summary>Everything a session needs, setting up what is missing. False = not ready.</summary>
+    private async Task<bool> EnsureReadyAsync(bool needSteam)
+    {
+        // Installs whatever is missing, updates to the version that came with the launcher (everyone
+        // in a session needs the same one) and switches the mod on - asking only to close the game.
+        if (!await _main.SetUpAsync(MainViewModel.SetupTrigger.Session)) return false;
         if (needSteam && !File.Exists(_main.Game!.SteamApiDll))
         {
             await _main.InformAsync("Steam files missing",
@@ -393,7 +350,7 @@ public sealed class PlayViewModel : ObservableObject, IDisposable
     private async Task RefreshFriendsAsync()
     {
         var game = _main.Game;
-        if (game == null) { FriendsStatus = "Find Retro Rewind first (see the checklist above)."; return; }
+        if (game == null) { FriendsStatus = "Find Retro Rewind first (see Setup above)."; return; }
         if (!File.Exists(game.SteamApiDll)) { FriendsStatus = "The game's Steam library is missing - verify the game files in Steam."; return; }
         if (!SteamClientRunning()) { FriendsStatus = "Steam is not running. Start Steam and sign in, then press Refresh."; return; }
 

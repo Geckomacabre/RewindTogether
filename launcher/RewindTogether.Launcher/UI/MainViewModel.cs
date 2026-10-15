@@ -17,6 +17,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly DispatcherTimer _timer;
     private string _tab = "play";
     private bool _started;
+    private bool _setupSawRunning;
 
     public MainViewModel(AppPaths paths, LaunchArgs args)
     {
@@ -108,6 +109,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _timer.Start();
         Tick();
         await Mods.LoadCatalogAsync();
+        // First run (or a new release unzipped over the old one): install everything right away,
+        // so the only thing left for the player is HOST or JOIN.
+        await AutoSetUpAsync();
         await Play.HandleStartArgsAsync(StartArgs);
     }
 
@@ -175,7 +179,16 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         bool running = GameProcess.IsRunning(Game);
         if (running && !GameRunning) GameStartedSeenAt = DateTime.UtcNow;
         if (!running) GameStartedSeenAt = null;
+        bool justClosed = GameRunning && !running;
         GameRunning = running;
+        if (justClosed && _started)
+        {
+            // "Close the game to finish setting up" - the moment it closes, finish by itself.
+            Play.RefreshSetup();
+            _ = AutoSetUpAsync();
+        }
+        else if (running != _setupSawRunning) Play.RefreshSetup();
+        _setupSawRunning = running;
 
         var fresh = LaunchFiles.ReadStatus(Game);
         if (fresh != null) Status = fresh;
@@ -235,6 +248,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         SaveSettings();
         RefreshGame();
         Notify("Using Retro Rewind at " + root, "ok");
+        // Found it: carry straight on with setting up, as on startup.
+        await AutoSetUpAsync();
     }
 
     public void ResetGameFolder()
@@ -276,15 +291,19 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         else if (r.ZipPath == null && Directory.Exists(Paths.SaveGamesDir)) Log.Warn(r.Message);
     }
 
-    /// <summary>Downloads (or reuses) the pinned UE4SS build and unpacks it into the game.</summary>
+    /// <summary>
+    /// Unpacks the pinned UE4SS build into the game: from the copy in the release zip, else a
+    /// cached download, else downloaded from GitHub now.
+    /// </summary>
     public async Task<bool> InstallUe4ssAsync(string? localZip = null)
     {
         if (Game == null) { await InformAsync("Retro Rewind not found", "Find the game first (Diagnostics > Game folder > Browse).", "bad"); return false; }
-        if (!await EnsureGameClosedAsync("press Install UE4SS again")) return false;
+        if (!await EnsureGameClosedAsync("press Set up again")) return false;
 
         try
         {
             await BackupSavesIfWantedAsync();
+            localZip ??= await Task.Run(() => Ue4ssSetup.FindBundledZip(Path.GetDirectoryName(Environment.ProcessPath)));
             string zip = localZip ?? Path.Combine(Paths.DownloadsDir, Ue4ssSetup.PinnedFileName);
             List<string> notes = new();
             await RunBusyAsync("Installing UE4SS", async busy =>
@@ -326,6 +345,179 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             return false;
         }
     }
+
+    // ------------------------------------------------------------------ one-click setup
+
+    public enum SetupTrigger
+    {
+        /// <summary>The launcher opened, or the game just closed: silent, never closes the game.</summary>
+        Startup,
+        /// <summary>The "Set up" button: may close the game, with the player's OK.</summary>
+        Button,
+        /// <summary>HOST or JOIN: like Button, but a player may skip an update and play anyway.</summary>
+        Session,
+    }
+
+    private bool _settingUp;
+
+    /// <summary>True while <see cref="SetUpAsync"/> runs.</summary>
+    public bool SettingUp { get => _settingUp; private set { if (Set(ref _settingUp, value)) Play.RefreshSetup(); } }
+
+    /// <summary>The version an install or update of Rewind Together brings: the bundled copy's, else the catalog's.</summary>
+    public string? ModSourceVersion =>
+        Bundled?.Version ?? (Mods.Catalog?.Find(GameInstall.RewindTogetherId) is { IsInstallable: true } e ? e.Version : null);
+
+    public SetupPlan CurrentPlan => SetupPlan.For(Ue4ss, RewindTogether, ModSourceVersion);
+
+    /// <summary>UE4SS and an enabled, complete Rewind Together are in the game.</summary>
+    public bool ModReady => Ue4ss?.State == Ue4ssState.Installed &&
+                            RewindTogether is { Installed: true, HasMainLua: true } && RewindTogether.EnabledInModsTxt != false;
+
+    /// <summary>
+    /// True when the exe was started from inside the zip (Explorer's zip view copies just the exe
+    /// to a temp folder, without the Mods folder next to it).
+    /// </summary>
+    public bool RunningFromZipPreview =>
+        Bundled == null && Path.GetDirectoryName(Environment.ProcessPath) is { } dir &&
+        Path.GetFullPath(dir).StartsWith(Path.GetFullPath(Path.GetTempPath()), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Everything Rewind Together needs, in order: back up the saves, install UE4SS, install or
+    /// update the mod, switch it on. True when it will load the next time the game starts.
+    /// </summary>
+    public async Task<bool> SetUpAsync(SetupTrigger trigger)
+    {
+        if (SettingUp) return false;
+        if (Game == null)
+        {
+            if (trigger == SetupTrigger.Startup) return false;
+            if (!await AskAsync("Retro Rewind was not found",
+                    "The launcher could not find Retro Rewind in your Steam libraries. Show it where the game is installed.\n\n" +
+                    "(In Steam: right-click Retro Rewind > Manage > Browse local files shows the folder.)",
+                    "Browse...", "Cancel", "warn"))
+                return false;
+            await BrowseForGameAsync();
+            if (Game == null) return false;
+        }
+
+        var plan = CurrentPlan;
+        // On its own the launcher never switches back on a mod the player switched off.
+        if (trigger == SetupTrigger.Startup) plan = plan with { SwitchOn = false };
+        if (plan.NothingToDo) return ModReady;
+        if (plan.InstallMod && RunningFromZipPreview)
+        {
+            // Nothing to install from: do not half-install (UE4SS alone) either.
+            if (trigger != SetupTrigger.Startup) await InformAsync("Unzip the download first", UnzipFirstText, "warn");
+            return false;
+        }
+
+        SettingUp = true;
+        try
+        {
+            if (plan.InstallUe4ss || plan.InstallMod)
+            {
+                if (GameProcess.IsRunning(Game))
+                {
+                    if (trigger == SetupTrigger.Startup) return false;
+                    bool canSkip = trigger == SetupTrigger.Session && !plan.InstallUe4ss && ModReady;
+                    bool close = await AskAsync("Close Retro Rewind to finish setting up",
+                        "Retro Rewind is running, and it keeps its mod files locked while it runs. Still to do: " +
+                        plan.Describe(InstalledModVersion) + "\n\n" +
+                        "The launcher can close the game for you (the same as quitting it yourself). Anything since the game last " +
+                        "saved is lost, so finish your day first if you are in the middle of one." +
+                        (canSkip ? "\n\nEveryone in a session needs the same Rewind Together version, so update before playing with friends." : ""),
+                        "Close the game and set up", canSkip ? "Play without updating" : "Not now", "warn");
+                    if (!close) return canSkip;
+                    if (!await CloseGameAsync()) return false;
+                }
+
+                await BackupSavesIfWantedAsync();
+                if (plan.InstallUe4ss && !await InstallUe4ssAsync()) return false;
+                if (plan.InstallMod && !await InstallRewindTogetherAsync(askForZip: trigger != SetupTrigger.Startup)) return false;
+            }
+            if (plan.SwitchOn || (trigger != SetupTrigger.Startup && RewindTogether?.EnabledInModsTxt == false)) SwitchOnRewindTogether();
+
+            RefreshInstallState();
+            if (ModReady)
+                Notify($"All set: Rewind Together {RewindTogether!.Version} is ready." +
+                       (GameProcess.IsRunning(Game) ? " Restart Retro Rewind for it to load." : " Press HOST, or join a friend."), "ok");
+            return ModReady;
+        }
+        finally
+        {
+            SettingUp = false;
+        }
+    }
+
+    private string? InstalledModVersion => RewindTogether is { Installed: true } rt ? rt.Version ?? "" : null;
+
+    /// <summary>Runs the silent setup when nothing else is going on (the launcher just opened, or the game just closed).</summary>
+    private async Task AutoSetUpAsync()
+    {
+        if (Game == null || SettingUp || DialogVisible || BusyVisible || Play.InSession) return;
+        var plan = CurrentPlan with { SwitchOn = false };
+        if (plan.NothingToDo) return;
+        // The Setup line says what to do instead: close the game (it finishes the moment the game
+        // closes), or unzip the download properly.
+        if (GameProcess.IsRunning(Game) || (plan.InstallMod && RunningFromZipPreview)) return;
+        Log.Info("Setting up by itself: " + plan.Describe(InstalledModVersion));
+        try
+        {
+            await SetUpAsync(SetupTrigger.Startup);
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Automatic setup failed", ex);
+            Notify("Setting up Rewind Together did not finish: " + ex.Message, "bad");
+        }
+    }
+
+    /// <summary>Closes the game for the player (never kills it). False if it is still running.</summary>
+    private async Task<bool> CloseGameAsync()
+    {
+        bool closed = false;
+        await RunBusyAsync("Closing Retro Rewind", async busy =>
+        {
+            busy.Report("Waiting for the game to quit...", null);
+            closed = await GameProcess.CloseAsync(Game!, TimeSpan.FromSeconds(30));
+        });
+        Tick();
+        if (!closed)
+            await InformAsync("Retro Rewind is still running",
+                "The game did not close. Quit it yourself (from its main menu, or with Alt+F4), then press Set up again.", "warn");
+        return closed;
+    }
+
+    public void SwitchOnRewindTogether()
+    {
+        if (Game == null) return;
+        ModsTxt.Update(Game.ModsTxt, t => t.SetEnabled(GameInstall.RewindTogetherFolder, true));
+        ModsJson.SetEnabled(Game.ModsJson, GameInstall.RewindTogetherFolder, true);
+        RefreshInstallState();
+        Notify(GameProcess.IsRunning(Game) ? "Rewind Together switched on. Restart the game for it to load." : "Rewind Together switched on.", "ok");
+    }
+
+    /// <summary>
+    /// Installs or updates Rewind Together from the copy next to the launcher, else the catalog,
+    /// else (if <paramref name="askForZip"/>) a zip the player picks.
+    /// </summary>
+    public async Task<bool> InstallRewindTogetherAsync(bool askForZip)
+    {
+        if (Bundled is { } bundled) return await InstallPackageAsync(bundled.Folder, null, "bundled");
+        var entry = Mods.Catalog?.Find(GameInstall.RewindTogetherId);
+        if (entry is { IsInstallable: true }) return await InstallFromCatalogAsync(entry);
+        if (!askForZip) return false;
+        bool pick = await AskAsync("Choose the Rewind Together download",
+            "Pick the Rewind Together zip you downloaded (for example from Nexus Mods). The launcher installs it into the game, " +
+            "keeps your settings, and switches it on.", "Choose the zip...", "Cancel", "info");
+        if (!pick) return false;
+        string? path = PickModFile();
+        return path != null && await InstallPackageAsync(path, null, "file");
+    }
+
+    public const string UnzipFirstText =
+        "The launcher was started from inside the zip, so the mod files next to it are missing. Close it, right-click the " +
+        "Rewind Together zip > Extract All..., then open RewindTogetherLauncher.exe from the unzipped folder.";
 
     /// <summary>
     /// Installs a package (zip, folder or pak) and records it. Asks before replacing anything the

@@ -297,7 +297,10 @@ local function applySky(fields)
         local sun = UE.TryGet(weather, "ref Directional")
         if p and UE.valid(sun) then
             setOnce("sun", fields.r, function()
-                sun:K2_SetActorRotation({ Pitch = tonumber(p), Yaw = tonumber(y), Roll = tonumber(rr) }, false)
+                -- UE.rotArg: as { Pitch = .. } the engine read pitch 0 and the
+                -- guest's sun sat on the horizon (ue.lua).
+                sun:K2_SetActorRotation(UE.rotArg({ Pitch = tonumber(p), Yaw = tonumber(y),
+                                                    Roll = tonumber(rr) }), false)
             end)
         end
     end
@@ -393,7 +396,9 @@ local function applySign(fields)
     -- local GameMode loading its own save puts its own name back.
     if textOf(UE.TryGet(sign, "Name")) == fields.n then return end
 
-    local ok = pcall(function() sign.Name = FText(fields.n) end)
+    -- UE.setText: a plain FText write runs 8 bytes past Name into Color (ue.lua);
+    -- Color was rewritten right after, which hid it.
+    local ok = UE.setText(sign, "Name", fields.n)
     if fields.c then
         local r, g, b, a = fields.c:match("([%d%.%-]+),([%d%.%-]+),([%d%.%-]+),([%d%.%-]+)")
         if r then

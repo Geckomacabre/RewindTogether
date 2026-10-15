@@ -47,12 +47,26 @@ local Chat        = require("chat")
 local Sync        = require("sync")
 local Hud         = require("hud")
 local World       = require("worldsync")
+local SkinSync    = require("skinsync")
 local NpcSync     = require("npcsync")
 local GuestInput  = require("guestinput")
+local DayEnd      = require("dayend")
+local TalkSync    = require("talksync")
 local MainMenu    = require("mainmenu")
 local Commands    = require("commands")
 local DevBridge   = require("devbridge")
 local Launch      = require("launchfile")
+local Native      = require("native")
+
+--- Which part of the tick is about to run: into the crash record (safety.lua),
+--- so a crash in a module's own code is put down to that module, and into the
+--- dev bridge's trace when that is on.
+local currentPhase = nil
+local function phase(name)
+    currentPhase = name
+    DevBridge.phase(name)
+    Safety.phase(name)
+end
 
 --------------------------------------------------------------------------
 -- State
@@ -182,8 +196,13 @@ local function installHooks()
     local function hook(path, fn)
         local inner = fn
         fn = function(...)
-            DevBridge.phase("hook " .. path)
-            return inner(...)
+            -- A hook can fire inside the tick or between ticks; whichever it
+            -- was, that is what the record says again once it has returned.
+            local was = currentPhase
+            phase("hook " .. path)
+            local results = table.pack(inner(...))
+            phase(was or Safety.IDLE)
+            return table.unpack(results, 1, results.n)
         end
         local ok, err = pcall(function() RegisterHook(path, fn) end)
         if ok then
@@ -231,7 +250,7 @@ local function tick()
     DevBridge.tick(now)
 
     -- The launcher's requests and our heartbeat for it (launchfile.lua).
-    DevBridge.phase("Launch.tick") Launch.tick(now, Config.Port)
+    phase("Launch.tick") Launch.tick(now, Config.Port)
 
     -- Resolve the net mode once, up front: several blocks below need it, and
     -- it is the cheapest possible read now that it comes from the cached net
@@ -265,7 +284,7 @@ local function tick()
     if Config.AutoJoinFromSteam and SteamJoin.isReady() and not inSession
        and (now - lastConnectPoll) > CONNECT_POLL then
         lastConnectPoll = now
-        DevBridge.phase("SteamJoin.checkLaunchCommandLine") SteamJoin.checkLaunchCommandLine()
+        phase("SteamJoin.checkLaunchCommandLine") SteamJoin.checkLaunchCommandLine()
     end
 
     -- A Steam Join Game for a launcher-hosted session: hand it to the launcher.
@@ -351,14 +370,14 @@ local function tick()
         end
     end
 
-    DevBridge.phase("MainMenu.tick") MainMenu.tick(now)
+    phase("MainMenu.tick") MainMenu.tick(now)
 
     -- Detect entering/leaving a session.
     if mode ~= lastNetMode then
         lastNetMode = mode
         Replication.setActive(inSession)
         if inSession then
-            DevBridge.phase("onEnteredSession") onEnteredSession()
+            phase("onEnteredSession") onEnteredSession()
         else
             if Net.state.joined then
                 Log.warn("the connection to the host ended - you are back in single player")
@@ -372,9 +391,12 @@ local function tick()
             Sync.reset()
             Hud.reset()
             World.reset()
+            SkinSync.reset()
             NpcSync.reset()
             Replication.resetGuest()
             GuestInput.reset()
+            DayEnd.reset()
+            TalkSync.reset()
         end
     end
 
@@ -383,7 +405,7 @@ local function tick()
     if Net.state.listenRequestedAt and not inSession
        and (now - Net.state.listenRequestedAt) > LISTEN_GRACE then
         Net.state.listenRequestedAt = nil
-        DevBridge.phase("Net.checkListenFailed") Net.checkListenFailed()
+        phase("Net.checkListenFailed") Net.checkListenFailed()
     end
 
     -- Same for joining. A travel route that dispatches but does nothing used
@@ -391,7 +413,7 @@ local function tick()
     if Net.state.joinRequestedAt and not inSession
        and (now - Net.state.joinRequestedAt) > JOIN_GRACE then
         Net.state.joinRequestedAt = nil
-        DevBridge.phase("Net.checkJoinFailed") Net.checkJoinFailed()
+        phase("Net.checkJoinFailed") Net.checkJoinFailed()
     end
 
     if not inSession then return end
@@ -399,57 +421,72 @@ local function tick()
     -- The receive side of the engine-connection channel. Installed here rather
     -- than at boot because the hook only matters once there is a session, and
     -- installing it costs nothing to retry.
-    DevBridge.phase("Chan.installReceiver") Chan.installReceiver()
+    phase("Chan.installReceiver") Chan.installReceiver()
     -- Deliver what the RPC hooks queued - here, between engine frames, never
     -- inside the hooks (rpcchan.lua, above dispatch()).
-    DevBridge.phase("Chan.pump") Chan.pump()
-    if UE.IsServer() then DevBridge.phase("Chan.installUpstreamReceiver") Chan.installUpstreamReceiver() end
+    phase("Chan.pump") Chan.pump()
+    if UE.IsServer() then phase("Chan.installUpstreamReceiver") Chan.installUpstreamReceiver() end
 
     if Config.UseSteamP2P == true then
         P2P.poll()
         Net.helloTick(now)
     end
-    DevBridge.phase("Replication.drainPending") Replication.drainPending()
+    phase("Replication.drainPending") Replication.drainPending()
     if UE.IsClient() then
-        DevBridge.phase("Replication.patchGuestMovement") Replication.patchGuestMovement()
+        phase("Replication.patchGuestMovement") Replication.patchGuestMovement()
     end
 
     -- A connected player with no pawn sees nothing but black, and neither end
     -- reports anything wrong, so this has to be noticed rather than waited on.
-    DevBridge.phase("Spawn.tickHost") Spawn.tickHost(now)
-    DevBridge.phase("Spawn.tickClient") Spawn.tickClient(now)
+    phase("Spawn.tickHost") Spawn.tickHost(now)
+    phase("Spawn.tickClient") Spawn.tickClient(now)
 
     -- Purely local: each machine puts a borrowed body on the pawns it can see
     -- and skips its own, so this needs no authority and no agreement with the
     -- other side.
-    DevBridge.phase("Bodies.tick") Bodies.tick(now)
+    phase("Bodies.tick") Bodies.tick(now)
 
     -- Guest-side, once: the client has no GameMode, which is the one object
     -- the HUD, the clock, the money and every store terminal read from. Build
     -- one and find out. Behind a crash breadcrumb; see localgm.lua.
-    DevBridge.phase("LocalGM.tick") LocalGM.tick(now)
+    phase("LocalGM.tick") LocalGM.tick(now)
     -- The build-mode stripes on a guest (worldsync.lua). LocalGM.stripesTick
     -- swept for OverlayMaterials, a theory 1.7.0 measured and disproved.
-    DevBridge.phase("World.guestTick") World.guestTick(now, Config)
+    phase("World.guestTick") World.guestTick(now, Config)
+    -- Walls, floors, ceilings and furniture in the host's skins (skinsync.lua).
+    phase("SkinSync.tickGuest") SkinSync.tickGuest(now)
+    -- The town's NPCs: no strays of the guest's own, bubbles facing it (npcsync.lua).
+    phase("NpcSync.tickGuest") NpcSync.tickGuest(now)
+    -- What the guest's own game does that the host must hear about (the till).
+    phase("GuestInput.tickGuest") GuestInput.tickGuest()
+    -- A conversation the host stopped saying closes (talksync.lua).
+    phase("TalkSync.tickGuest") TalkSync.tickGuest()
 
     -- Guest-side: the money/clock HUD only a GameMode ever builds. hud.lua.
-    DevBridge.phase("Hud.tick") Hud.tick(now)
+    phase("Hud.tick") Hud.tick(now)
 
     if UE.IsServer() then
-        DevBridge.phase("World.tickHost") World.tickHost(now)
-        DevBridge.phase("NpcSync.tickHost") NpcSync.tickHost(now)
-        DevBridge.phase("GuestInput.tickHost") GuestInput.tickHost()
-        DevBridge.phase("Sync.tickHost") Sync.tickHost(now)
+        phase("World.tickHost") World.tickHost(now)
+        phase("SkinSync.tickHost") SkinSync.tickHost(now)
+        phase("NpcSync.tickHost") NpcSync.tickHost(now)
+        phase("GuestInput.tickHost") GuestInput.tickHost()
+        -- Trust in a guest's position, back after the host moved them (replication.lua).
+        phase("Replication.restoreTrust") Replication.restoreTrust()
+        -- The end-of-day summary, to the guests (dayend.lua).
+        phase("DayEnd.tickHost") DayEnd.tickHost(now)
+        -- A guest's conversations, on the guest's screen (talksync.lua).
+        phase("TalkSync.tickHost") TalkSync.tickHost(now)
+        phase("Sync.tickHost") Sync.tickHost(now)
     end
 
     if (now - lastSweep) > SWEEP_INTERVAL then
         lastSweep = now
-        DevBridge.phase("Replication.sweep") Replication.sweep()
+        phase("Replication.sweep") Replication.sweep()
     end
 
     if (now - lastRosterPoll) > ROSTER_INTERVAL then
         lastRosterPoll = now
-        DevBridge.phase("Players.refreshRoster") Players.refreshRoster()
+        phase("Players.refreshRoster") Players.refreshRoster()
 
         -- Poll-based join/leave. The engine's PostLogin/Logout are plain C++
         -- virtuals with no reflection data, so they cannot be hooked; counting
@@ -459,7 +496,7 @@ local function tick()
             if lastPlayerCount > 0 and n > lastPlayerCount then
                 Log.info("a player joined (%d connected)", n)
                 Overlay.push(("A player joined (%d in store)"):format(n))
-                DevBridge.phase("Replication.sweepAll") Replication.sweepAll()
+                phase("Replication.sweepAll") Replication.sweepAll()
             elseif lastPlayerCount > 0 and n < lastPlayerCount then
                 -- This is the ONLY place a departure gets reported. The engine's
                 -- Logout is a plain C++ virtual with no reflection data, and the
@@ -478,10 +515,10 @@ local function tick()
 
     if (now - lastNametag) > NAMETAG_INTERVAL then
         lastNametag = now
-        DevBridge.phase("Players.updateNametags") Players.updateNametags()
+        phase("Players.updateNametags") Players.updateNametags()
     end
 
-    DevBridge.phase("Overlay.tick") Overlay.tick()
+    phase("Overlay.tick") Overlay.tick()
 end
 
 --------------------------------------------------------------------------
@@ -499,6 +536,17 @@ local function start()
     -- player hitting the same crash forever and the game simply coming up with
     -- one cosmetic feature switched off.
     Safety.init()
+
+    -- Before anything indexes an engine object: UE4SS's member-name cache may
+    -- still hold pointers into the strings of a Lua state a hot reload closed,
+    -- and the next name it learns would make it read them (native.lua).
+    Native.repairNameCache()
+
+    -- With RewindNative up, ask the engine's crash reports whether the last
+    -- run really crashed before anything is switched off for it: a closed
+    -- window leaves the same record behind as a crash (safety.lua).
+    Safety.setPid(Native.pid())
+    Safety.settle(Native.crashesSince, Native.pidAlive)
     Safety.report()
     Safety.reportConfig()
 
@@ -517,8 +565,11 @@ local function start()
     Sync.init(Config)
     Hud.init(Config)
     World.init()
+    SkinSync.init(Config)
     NpcSync.init(Config)
     GuestInput.init(Config)
+    DayEnd.init()
+    TalkSync.init(Config)
     Chat.init()
     MainMenu.init(Config)
     Commands.init(Config)
@@ -547,7 +598,7 @@ local function start()
         Log.guard("tick", tick)
         -- Whatever the tick found is only good for this frame (ue.lua).
         UE.endFrame()
-        DevBridge.phase("idle (between ticks)")
+        phase(Safety.IDLE)
     end
     if type(LoopInGameThreadWithDelay) == "function"
        and pcall(LoopInGameThreadWithDelay, TICK_MS, function() body() return false end) then

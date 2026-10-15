@@ -17,8 +17,9 @@
     translated to the engine's FKey names here.
 ]]
 
-local Log = require("log")
-local UE  = require("ue")
+local Log    = require("log")
+local UE     = require("ue")
+local Safety = require("safety")
 
 local Input = {}
 
@@ -72,7 +73,11 @@ local function poll()
         local ok, down = pcall(function() return pc:IsInputKeyDown(b.key) end)
         down = ok and down == true
         if down and not b.down then
+            -- In the crash record (safety.lua): this runs between ticks, where
+            -- an unmarked crash would read as the engine's own.
+            Safety.phase("key " .. b.label)
             Log.guard("key " .. b.label, b.fn)
+            Safety.phase(Safety.IDLE)
         end
         b.down = down
     end
