@@ -10,12 +10,19 @@ namespace RewindTogether.Launcher.UI;
 
 public sealed class FriendItem : ObservableObject
 {
-    public FriendItem(FriendInfo f, ICommand join, ICommand invite)
+    public FriendItem(FriendInfo f, ICommand join, ICommand invite, ModMismatch? mods = null)
     {
         Info = f;
         JoinCommand = join;
         InviteCommand = invite;
+        Mods = mods is { Any: true } ? mods : null;
     }
+
+    /// <summary>How this host's mods differ from ours (ModFingerprint), or null when they match or cannot be told.</summary>
+    public ModMismatch? Mods { get; }
+    public string ModsText => Mods?.ShortText ?? "";
+    public bool ModsVisible => Mods != null;
+    public string ModsTone => Mods?.Tone ?? "ok";
 
     public FriendInfo Info { get; }
     public string Name => string.IsNullOrWhiteSpace(Info.Name) ? Info.Id.ToString() : Info.Name;
@@ -380,7 +387,10 @@ public sealed class PlayViewModel : ObservableObject, IDisposable
             }
 
             HostingFriends.Clear();
-            foreach (var f in friends.Where(f => f.Hosting)) HostingFriends.Add(new FriendItem(f, JoinFriendCommand, InviteFriendCommand));
+            var mine = _main.LocalModFingerprint();
+            foreach (var f in friends.Where(f => f.Hosting))
+                HostingFriends.Add(new FriendItem(f, JoinFriendCommand, InviteFriendCommand,
+                    mine == null ? null : ModMismatch.Compare(mine, f.Fingerprint)));
             InvitableFriends.Clear();
             foreach (var f in friends.Where(f => !f.Hosting)) InvitableFriends.Add(new FriendItem(f, JoinFriendCommand, InviteFriendCommand));
 
@@ -423,6 +433,10 @@ public sealed class PlayViewModel : ObservableObject, IDisposable
     public async Task JoinSteamAsync(ulong hostId, string name)
     {
         if (!await EnsureReadyAsync(needSteam: true)) return;
+        // From the friend list the host's mods are already known: ask before the game even starts.
+        var listed = HostingFriends.FirstOrDefault(f => f.Info.Id == hostId)?.Info;
+        bool modsChecked = listed != null;
+        if (listed != null && !await ConfirmModsAsync(listed.Fingerprint, name)) return;
         if (_session != SessionKind.None)
         {
             if (_session == SessionKind.JoinSteam && _joinHost == hostId) { _main.Notify("Already joining that store.", "info"); return; }
@@ -455,6 +469,16 @@ public sealed class PlayViewModel : ObservableObject, IDisposable
             SetPhase("Connecting to Steam...", "info");
             var agent = await StartAgentAsync();
             ct.ThrowIfCancellationRequested();
+            if (!modsChecked)
+            {
+                // A typed Steam ID or Steam's "Join Game": look the host up first.
+                var host = await HostInfoAsync(agent, hostId);
+                if (host != null && !await ConfirmModsAsync(host.Fingerprint, string.IsNullOrWhiteSpace(name) ? host.Name : name))
+                {
+                    await EndSessionAsync(null, userStopped: true);
+                    return;
+                }
+            }
             SetPhase($"Opening a Steam connection to {_joinName}...", "info");
             int port = await agent.StartJoinAsync(hostId, _main.Settings.GuestTunnelPort, TimeSpan.FromSeconds(10));
             ct.ThrowIfCancellationRequested();
@@ -470,6 +494,37 @@ public sealed class PlayViewModel : ObservableObject, IDisposable
         {
             await FailSessionAsync("Joining did not start", ex.Message);
         }
+    }
+
+    /// <summary>The host's entry in Steam's friend list (with its published mods), or null.</summary>
+    private static async Task<FriendInfo?> HostInfoAsync(SteamAgentClient agent, ulong hostId)
+    {
+        try
+        {
+            var friends = await agent.QueryFriendsAsync(TimeSpan.FromSeconds(8));
+            return friends.FirstOrDefault(f => f.Id == hostId);
+        }
+        catch (Exception ex) when (ex is TimeoutException or SteamInitException or InvalidOperationException)
+        {
+            Log.Warn("Could not look the host's mods up before joining: " + ex.Message);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// When the host's mods differ from ours, says how and asks. True to go ahead: they match, the
+    /// host's launcher published nothing (older than this check), or the player chose "Join anyway".
+    /// </summary>
+    private async Task<bool> ConfirmModsAsync(ModFingerprint? host, string name)
+    {
+        var mine = _main.LocalModFingerprint();
+        if (mine == null || host == null) return true;
+        var diff = ModMismatch.Compare(mine, host);
+        if (diff is not { Any: true }) return true;
+        string who = string.IsNullOrWhiteSpace(name) ? "Your friend" : name;
+        Log.Info($"Mods differ from {who}'s: {diff.Explain(who).Replace(Environment.NewLine, " / ")}");
+        return await _main.AskAsync($"{who}'s mods are different from yours", diff.Explain(who),
+            "Join anyway", "Cancel", diff.Tone);
     }
 
     private async Task JoinAddressAsync()
@@ -614,7 +669,7 @@ public sealed class PlayViewModel : ObservableObject, IDisposable
                     bool wantPresence = _agent?.IsRunning == true && status?.IsHosting == true;
                     if (_agent != null && wantPresence != _presenceOn)
                     {
-                        _agent.SetPresence(wantPresence);
+                        _agent.SetPresence(wantPresence, wantPresence ? _main.LocalModFingerprint()?.ToPresence() : null);
                         _presenceOn = wantPresence;
                         if (wantPresence) _main.Notify("Your store is open. Steam friends can join from their launcher or with \"Join Game\" in Steam.", "pink");
                     }

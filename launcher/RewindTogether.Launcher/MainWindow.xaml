@@ -73,8 +73,25 @@
                 <ui:DiagnosticsView DataContext="{Binding Diag}" Visibility="{Binding DataContext.IsDiagTab, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource Vis}}" />
             </Grid>
 
-            <!-- ======================================================== notice bar -->
-            <Border Grid.Row="2" Margin="28,0,28,8" CornerRadius="12" Padding="16,10" Background="{StaticResource Bg2Brush}"
+            <!-- ======================================================== update banner + notice bar -->
+            <StackPanel Grid.Row="2">
+            <Border Margin="28,0,28,8" CornerRadius="12" Padding="16,10" Background="{StaticResource Bg2Brush}"
+                    BorderThickness="1.5" BorderBrush="{Binding Source=ok, Converter={StaticResource Tone}}"
+                    Visibility="{Binding UpdateVisible, Converter={StaticResource Vis}}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Ellipse Width="10" Height="10" Fill="{Binding Source=ok, Converter={StaticResource Tone}}" VerticalAlignment="Center" Margin="0,0,12,0" />
+                    <TextBlock Grid.Column="1" Text="{Binding UpdateText}" VerticalAlignment="Center" TextWrapping="Wrap" />
+                    <Button Grid.Column="2" Style="{StaticResource PinkButton}" Content="Update" Margin="12,0,0,0" Command="{Binding UpdateCommand}" />
+                    <Button Grid.Column="3" Style="{StaticResource SmallGhostButton}" Content="Later" Margin="8,0,0,0" Command="{Binding DismissUpdateCommand}" />
+                </Grid>
+            </Border>
+            <Border Margin="28,0,28,8" CornerRadius="12" Padding="16,10" Background="{StaticResource Bg2Brush}"
                     BorderThickness="1.5" BorderBrush="{Binding NoticeTone, Converter={StaticResource Tone}}"
                     Visibility="{Binding NoticeVisible, Converter={StaticResource Vis}}">
                 <Grid>
@@ -88,6 +105,7 @@
                     <Button Grid.Column="2" Style="{StaticResource SmallGhostButton}" Content="Dismiss" Margin="12,0,0,0" Command="{Binding DismissNoticeCommand}" />
                 </Grid>
             </Border>
+            </StackPanel>
 
             <!-- ======================================================== footer status chips -->
             <Border Grid.Row="3" Background="#0E0C22" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,1,0,0" Padding="28,9">

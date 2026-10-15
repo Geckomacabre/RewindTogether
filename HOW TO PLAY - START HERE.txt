@@ -1,5 +1,5 @@
 =============================================================
-  REWIND TOGETHER  -  play Retro Rewind together   (v1.7.0)
+  REWIND TOGETHER  -  play Retro Rewind together   (v1.7.1)
   The simple guide. Read your part: HOST or GUEST.
 =============================================================
 
@@ -31,6 +31,18 @@ INSTALL  (both of you, once)
   That's it. The launcher finds the game, backs up your
   saves, and installs everything. Nothing to download, nothing
   to edit. If the game is open, it offers to close it.
+
+
+UPDATING  (both of you)
+-----------------------
+
+  When a new version is out, the launcher shows a green
+  banner. Press  Update . It downloads the new version,
+  checks it, and restarts by itself in about a minute.
+  Your saves and settings stay as they are.
+
+  * Update when you are NOT playing together.
+  * Update together: you both need the same version.
 
 
 IF YOU ARE THE HOST
@@ -88,6 +100,10 @@ PLAYING TOGETHER
 
   Press F6 any time to see if you are connected and in sync.
 
+  If Discord is open, your profile says "Playing Rewind
+  Together" while you play. To turn that off: launcher,
+  DIAGNOSTICS, switch off "Show 'Playing Rewind Together'".
+
 
 IF IT DOES NOT WORK
 -------------------
@@ -106,6 +122,18 @@ IF IT DOES NOT WORK
     - JOIN BY ADDRESS: install the free VPN Tailscale on both
       PCs, sign in to the same Tailscale network, and type the
       host's Tailscale address.
+
+  The launcher says your mods are different
+    Before you join, the launcher compares your mods with the
+    host's and says what differs:
+    - A different Rewind Together version: whoever is behind
+      presses Update first.
+    - Different content mods (.pak or Blueprint mods): get the
+      same files the host has, from wherever they got them.
+      Otherwise some things may be missing from the store.
+    - Different script mods: usually fine, they run on each
+      PC separately.
+    "Join anyway" still works if you want to try.
 
   Steam updated the game for only one of you
     You both need the same game version. Let Steam finish

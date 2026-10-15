@@ -38,6 +38,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         DialogPrimaryCommand = new RelayCommand(() => CloseDialog(true));
         DialogSecondaryCommand = new RelayCommand(() => CloseDialog(false));
         DismissNoticeCommand = new RelayCommand(() => NoticeText = "");
+        UpdateCommand = new AsyncCommand(UpdateNowAsync);
+        DismissUpdateCommand = new RelayCommand(() => { _updateDismissed = true; Raise(nameof(UpdateVisible)); });
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _timer.Tick += (_, _) => Tick();
@@ -113,6 +115,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // so the only thing left for the player is HOST or JOIN.
         await AutoSetUpAsync();
         await Play.HandleStartArgsAsync(StartArgs);
+        if (StartArgs.UpdatedFrom is { Length: > 0 } from)
+            Notify($"Updated from {from} to {CurrentReleaseVersion}.", "ok");
+        _ = CheckForUpdatesAsync(manual: false);
     }
 
     public void HandleForwardedArgs(LaunchArgs args)
@@ -175,8 +180,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private void Tick()
     {
+        if (_started && Settings.CheckForUpdates && DateTime.UtcNow - _lastUpdateCheck > UpdateCheckEvery)
+            _ = CheckForUpdatesAsync(manual: false);
         if (Game == null) return;
-        bool running = GameProcess.IsRunning(Game);
+        _gamePid = GameProcess.FindProcessId(Game);
+        bool running = _gamePid != null;
         if (running && !GameRunning) GameStartedSeenAt = DateTime.UtcNow;
         if (!running) GameStartedSeenAt = null;
         bool justClosed = GameRunning && !running;
@@ -198,6 +206,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Raise(nameof(Status));
         UpdateGameChip();
         Play.OnTick();
+        UpdateDiscord();
     }
 
     private void UpdateGameChip()
@@ -806,15 +815,228 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     // ------------------------------------------------------------------ shutdown
 
+    /// <summary>This PC's mods as a co-op guest or host sees them (ModFingerprint), or null without a game.</summary>
+    public ModFingerprint? LocalModFingerprint()
+    {
+        if (Game == null) return null;
+        try
+        {
+            return ModFingerprint.FromScan(RewindTogether?.Version, new ModManager(Game, Paths.InstalledManifestFile).ScanGame());
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Log.Warn("Could not list this PC's mods: " + ex.Message);
+            return null;
+        }
+    }
+
+    // ------------------------------------------------------------------ self-update (SelfUpdate.cs)
+
+    private static readonly TimeSpan UpdateCheckEvery = TimeSpan.FromHours(6);
+    private readonly UpdateChecker _updateChecker = new();
+    private ReleaseInfo? _update;
+    private bool _updateDismissed, _checkingUpdate;
+    private DateTime _lastUpdateCheck = DateTime.MinValue;
+    private string _updateStatus = "Not checked yet.";
+
+    /// <summary>The release this launcher's folder holds: its bundled mod's version, else the launcher's own.</summary>
+    public string CurrentReleaseVersion =>
+        Bundled?.Version is { Length: > 0 } v && v != "unknown" ? v : AppInfo.Version;
+
+    public bool UpdateVisible => _update != null && !_updateDismissed;
+    public string UpdateText => _update is { } u
+        ? $"Rewind Together {u.Version} is out - you have {CurrentReleaseVersion}. Updating takes a minute and keeps your saves and settings."
+        : "";
+    public string UpdateStatus { get => _updateStatus; private set { if (Set(ref _updateStatus, value)) Diag.RaiseUpdateStatus(); } }
+    public ICommand UpdateCommand { get; }
+    public ICommand DismissUpdateCommand { get; }
+
+    /// <summary>Asks GitHub for the latest release. Quiet unless <paramref name="manual"/>.</summary>
+    public async Task CheckForUpdatesAsync(bool manual)
+    {
+        if (_checkingUpdate) return;
+        if (!manual && !Settings.CheckForUpdates) return;
+        _lastUpdateCheck = DateTime.UtcNow;
+        if (RunningFromZipPreview)
+        {
+            if (manual) Notify("Unzip the download first: a launcher opened from inside the zip cannot update itself.", "warn");
+            return;
+        }
+        _checkingUpdate = true;
+        try
+        {
+            var latest = await _updateChecker.LatestAsync(Settings.UpdateApiBase, Settings.UpdateRepo, CancellationToken.None);
+            if (latest != null && VersionCompare.IsNewer(latest.Version, CurrentReleaseVersion))
+            {
+                Log.Info($"Update available: {latest.Version} ({latest.ZipName}, {latest.ZipSize:N0} bytes, sha256 {latest.Sha256 ?? "none"})");
+                _update = latest;
+                _updateDismissed = false;
+                Raise(nameof(UpdateVisible));
+                Raise(nameof(UpdateText));
+                UpdateStatus = $"Version {latest.Version} is available (you have {CurrentReleaseVersion}).";
+            }
+            else
+            {
+                UpdateStatus = $"Up to date: {CurrentReleaseVersion} (checked {DateTime.Now:HH:mm}).";
+                if (manual) Notify($"You have the latest version ({CurrentReleaseVersion}).", "ok");
+            }
+        }
+        catch (UpdateException ex)
+        {
+            Log.Warn("Update check failed: " + ex.Message);
+            UpdateStatus = "Could not check: " + ex.Message;
+            if (manual) Notify("Could not check for updates: " + ex.Message, "warn");
+        }
+        finally
+        {
+            _checkingUpdate = false;
+        }
+    }
+
+    /// <summary>The banner's Update button: download, check, swap in place, restart.</summary>
+    public async Task UpdateNowAsync()
+    {
+        if (_update is not { } release) return;
+        string appDir = Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
+
+        if (Play.InSession)
+        {
+            await InformAsync("Finish your session first",
+                "Updating restarts the launcher, and the launcher is what carries your co-op connection. " +
+                "Press STOP when you are done playing, then update.", "warn");
+            return;
+        }
+        if (release.Sha256 == null || !UpdateInstaller.CanWrite(appDir))
+        {
+            string why = release.Sha256 == null
+                ? "This release has no published checksum, so the launcher will not install it by itself."
+                : "The launcher cannot write to its own folder (it may be inside Program Files).";
+            if (await AskAsync("Update by hand", why + "\n\nDownload the new zip from the release page and unzip it over this folder.",
+                    "Open the release page", "Cancel", "warn"))
+                GameProcess.OpenInShell(release.PageUrl);
+            return;
+        }
+        if (!await AskAsync($"Update to {release.Version}?",
+                $"The launcher downloads Rewind Together {release.Version} from GitHub ({release.ZipSize / 1048576.0:N0} MB), " +
+                "checks it, replaces itself and the mod files in this folder, and restarts.\n\n" +
+                "Your saves and settings stay as they are. If the game is open, the launcher asks you to close it " +
+                "before it updates the mod.",
+                "Update now", "Later"))
+            return;
+
+        var installer = new UpdateInstaller(appDir, Downloader);
+        try
+        {
+            await RunBusyAsync($"Updating to {release.Version}", async busy =>
+            {
+                var progress = new Progress<DownloadProgress>(p => busy.Report(
+                    p.TotalBytes is > 0
+                        ? $"Downloading... {p.BytesReceived / 1048576.0:N0} of {p.TotalBytes.Value / 1048576.0:N0} MB"
+                        : $"Downloading... {p.BytesReceived / 1048576.0:N0} MB",
+                    p.Fraction));
+                string root = await installer.PrepareAsync(release, progress, CancellationToken.None);
+                busy.Report("Putting the new version in place...", null);
+                await Task.Run(() => installer.Install(root));
+                busy.Report("Restarting...", null);
+            });
+        }
+        catch (Exception ex) when (ex is UpdateException or DownloadException)
+        {
+            Log.Error("Update failed", ex);
+            UpdateInstaller.CleanUp(appDir);
+            await InformAsync("The update did not finish",
+                ex.Message + "\n\nThe launcher was left as it was. Try again later, or download the new zip from the release page.", "bad");
+            return;
+        }
+
+        Log.Info($"The launcher folder now holds {release.Version}; restarting.");
+        try
+        {
+            installer.StartNewLauncher(CurrentReleaseVersion, StartArgs.PersistentArgs());
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Could not start the updated launcher", ex);
+            await InformAsync("Updated - open the launcher again",
+                $"Rewind Together {release.Version} is in place, but the new launcher could not be started by itself. " +
+                "Close this window and open RewindTogetherLauncher.exe again.", "warn");
+        }
+        Application.Current?.Shutdown();
+    }
+
+    // ------------------------------------------------------------------ Discord status (DiscordPresence.cs)
+
+    private DiscordPresenceService? _discord;
+    private int? _gamePid, _gameStartPid;
+    private DateTime? _gameStart;
+    private string _discordStatusText = "Shows up while the game is running.";
+
+    public string DiscordStatusText { get => _discordStatusText; private set { if (Set(ref _discordStatusText, value)) Diag.RaiseDiscordStatus(); } }
+
+    /// <summary>Says on the player's Discord profile what they are doing; the service does the talking.</summary>
+    private void UpdateDiscord()
+    {
+        if (!Settings.DiscordStatus)
+        {
+            StopDiscord(wait: false);
+            DiscordStatusText = "Off.";
+            return;
+        }
+        var activity = DiscordStatus.For(new DiscordStatusInput(GameRunning, Play.IsHosting, Play.IsJoining, Status, GameStartedAt(), ProjectUrl));
+        if (activity == null && _discord == null)
+        {
+            DiscordStatusText = "Shows up while the game is running.";
+            return;
+        }
+        _discord ??= new DiscordPresenceService();
+        // Shown for the game's process, so Discord puts it in place of the plain "Playing Retro Rewind".
+        _discord.Want(_gamePid ?? 0, activity);
+        DiscordStatusText = _discord.StatusText;
+    }
+
+    private void StopDiscord(bool wait)
+    {
+        if (_discord is not { } d) return;
+        _discord = null;
+        if (wait) d.Dispose();       // clears the status and closes the pipe (a few seconds at most)
+        else Task.Run(d.Dispose);
+    }
+
+    /// <summary>When the game process started (Discord counts the time played from it).</summary>
+    private DateTime? GameStartedAt()
+    {
+        if (_gamePid is not int pid) return null;
+        if (_gameStartPid != pid)
+        {
+            _gameStartPid = pid;
+            try
+            {
+                using var p = System.Diagnostics.Process.GetProcessById(pid);
+                _gameStart = p.StartTime.ToUniversalTime();
+            }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or Win32Exception)
+            {
+                _gameStart = GameStartedSeenAt;
+            }
+        }
+        return _gameStart;
+    }
+
+    /// <summary>The project page on GitHub, for the status's button.</summary>
+    private string ProjectUrl =>
+        "https://github.com/" + (System.Text.RegularExpressions.Regex.IsMatch(Settings.UpdateRepo, @"^[\w.-]+/[\w.-]+$") ? Settings.UpdateRepo : ReleaseFeed.DefaultRepo);
+
     public void OnClosing(CancelEventArgs e)
     {
         _timer.Stop();
         Play.OnWindowClosing();
+        StopDiscord(wait: true);
     }
 
     public void Dispose()
     {
         _timer.Stop();
         Play.Dispose();
+        StopDiscord(wait: true);
     }
 }

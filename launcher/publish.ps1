@@ -16,10 +16,18 @@ if (-not $SkipTests) {
     if ($LASTEXITCODE -ne 0) { throw "Tests failed - not publishing." }
 }
 
+# The launcher carries the release's version (mod.json), so its footer, the release it came
+# with and the self-update all talk about the same number.
+$modJson = Join-Path $PSScriptRoot '..\Mods\RewindTogether\mod.json'
+$version = (Get-Content $modJson -Raw | ConvertFrom-Json).version
+if ($version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') { throw "mod.json version '$version' is not x.y.z." }
+$prefix, $suffix = $version.Split('-', 2)
+
 $dist = Join-Path $PSScriptRoot 'dist'
 dotnet publish RewindTogether.Launcher\RewindTogether.Launcher.csproj -c Release -r win-x64 --self-contained true `
     -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true `
     -p:DebugType=None -p:DebugSymbols=false -p:SatelliteResourceLanguages=en `
+    "-p:VersionPrefix=$prefix" "-p:VersionSuffix=$suffix" `
     -o $dist --nologo
 if ($LASTEXITCODE -ne 0) { throw "Publish failed." }
 

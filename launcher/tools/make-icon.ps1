@@ -3,7 +3,12 @@
   16/24/32/48/64/128/256 px. Pure System.Drawing, no downloads. Re-run after changing the design.
 
     powershell -ExecutionPolicy Bypass -File tools\make-icon.ps1
+
+  The same design as one big PNG (Discord's app icon and Rich Presence art want 1024x1024):
+
+    powershell -ExecutionPolicy Bypass -File tools\make-icon.ps1 -PngOut logo.png [-PngSize 1024]
 #>
+param([string]$PngOut, [int]$PngSize = 1024)
 Add-Type -AssemblyName System.Drawing
 $ErrorActionPreference = 'Stop'
 $out = Join-Path $PSScriptRoot '..\RewindTogether.Launcher\Assets\icon.ico'
@@ -60,6 +65,14 @@ function Draw-Icon([int]$s) {
     }
     $g.Dispose()
     return $bmp
+}
+
+if ($PngOut) {
+    $b = Draw-Icon $PngSize
+    $b.Save([System.IO.Path]::GetFullPath($PngOut), [System.Drawing.Imaging.ImageFormat]::Png)
+    $b.Dispose()
+    Write-Host "Wrote $PngOut ($PngSize x $PngSize)"
+    return
 }
 
 $sizes = 16, 24, 32, 48, 64, 128, 256

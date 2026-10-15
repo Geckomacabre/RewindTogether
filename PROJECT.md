@@ -23,6 +23,15 @@ each bug actually was.
   `py dev/bridge.py B "lua return ..."`. Slot A = first instance, B = second. Each slot also
   writes `RewindTogether.trace.<slot>`: the last tick phase that started, which is how a
   native crash gets pinned to a phase.
+- **Releasing a new version** (players' launchers offer it as a one-click update):
+  1. bump the version in `Mods/RewindTogether/mod.json`, `Net.VERSION` in `net.lua` and the top
+     of `VERSION.txt` (with what changed). Every update needs a NEW number: launchers compare
+     versions, so a replaced zip under the same tag is invisible to them;
+  2. `launcher\publish.ps1` (tests, then the exe, stamped with that version);
+  3. `py dev/package.py`, then the `um publish check` below;
+  4. commit, push, and `gh release create v<version> dist/RewindTogether-<version>.zip
+     --title "Rewind Together <version>" --notes-file <notes>`. GitHub publishes the zip's
+     SHA-256 itself, which the updater checks.
 - Release: `py dev/package.py` stages and zips `dist/RewindTogether-<version>.zip` (launcher exe,
   the mod with its native DLL, README/FRIEND/VERSION, the two port tools, the DLL's source) after
   checking that mod.json, net.lua and VERSION.txt agree. Then `um publish check` it against the

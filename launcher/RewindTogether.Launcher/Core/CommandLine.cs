@@ -10,6 +10,8 @@ namespace RewindTogether.Launcher.Core;
 ///   --data-dir &lt;path&gt;    keep settings and logs here instead of %APPDATA%\RewindTogether
 ///   --tab play|mods|diagnostics   start on a tab
 ///   --steam-agent        internal: run headless as the Steam helper process (see SteamAgent)
+///   --after-update &lt;pid&gt; --updated-from &lt;version&gt;   internal: started by the self-update
+///                        (SelfUpdate.cs); waits for the old launcher to exit first
 /// </summary>
 public sealed class LaunchArgs
 {
@@ -20,6 +22,8 @@ public sealed class LaunchArgs
     public string? Tab { get; private set; }
     public bool SteamAgent { get; private set; }
     public string? SteamDll { get; private set; }
+    public int? AfterUpdatePid { get; private set; }
+    public string? UpdatedFrom { get; private set; }
     public List<string> Problems { get; } = new();
 
     public bool HasAction => Host || JoinSteamId != null;
@@ -49,6 +53,10 @@ public sealed class LaunchArgs
                 case "--tab": a.Tab = Next()?.ToLowerInvariant(); break;
                 case "--steam-agent": a.SteamAgent = true; break;
                 case "--steam-dll": a.SteamDll = Next(); break;
+                case "--after-update":
+                    if (int.TryParse(Next(), out int pid) && pid > 0) a.AfterUpdatePid = pid;
+                    break;
+                case "--updated-from": a.UpdatedFrom = Next(); break;
                 default:
                     // Steam can hand over "+rt_join 7656..." as a single argument.
                     if (arg.StartsWith("+rt_join ", StringComparison.OrdinalIgnoreCase) &&
@@ -63,6 +71,15 @@ public sealed class LaunchArgs
             a.Host = false;
         }
         return a;
+    }
+
+    /// <summary>The arguments a restarted launcher must keep (the self-update passes them on).</summary>
+    public string[] PersistentArgs()
+    {
+        var list = new List<string>();
+        if (!string.IsNullOrWhiteSpace(DataDir)) { list.Add("--data-dir"); list.Add(DataDir); }
+        if (!string.IsNullOrWhiteSpace(GameDir)) { list.Add("--game-dir"); list.Add(GameDir); }
+        return list.ToArray();
     }
 
     /// <summary>The arguments worth forwarding to an already-running launcher.</summary>

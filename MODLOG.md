@@ -456,3 +456,20 @@ starts itself, sync/interaction verified, docs for strangers.
   unchanged, GameUserSettings.ini restored, bridge files removed): F6 at the menu logs only; in the
   store the real key shows the centred box; timer measured 268 ticks after ~2.7 s of 800. Deployed
   hud.lua/overlay.lua/commands.lua (only this session's changes differed). Gotcha in PROJECT.md.
+- Launcher, for 1.7.1 (uncommitted until released):
+  - Self-update from GitHub releases (Core\SelfUpdate.cs): banner + Update, SHA-256 checked,
+    swap with rollback, restart keeping --data-dir/--game-dir. End to end against a stand-in
+    GitHub on 127.0.0.1: about 14 s.
+  - Mod check before joining (Core\ModFingerprint.cs): the host publishes rt_ver/rt_cmods/
+    rt_cnames/rt_smods/rt_snames in Steam rich presence. The guest's friend list and JOIN say
+    what differs, with "Join anyway". Unit-tested with simulated Steam data only; not yet tried
+    with two real accounts.
+  - Discord status (Core\DiscordPresence.cs): local RPC pipe, application "Rewind Together" (id
+    1560334255547093155, art asset "logo"). Real Discord accepted the activity (name "Rewind
+    Together", logo resolved, button URL attached) from a throwaway console using the launcher's
+    own classes; the status was cleared afterwards. Set for the game's pid. Not yet seen with
+    the real game running: whether Discord then hides its own "Playing Retro Rewind" is
+    unconfirmed.
+  - Logo: launcher\tools\make-wordmark.py draws the REWIND TOGETHER sticker (RT pink/cyan, purple
+    die-cut outline) to dist\discord\logo-wordmark.png.
+  - 223 launcher tests, 5 clean runs in a row.

@@ -48,6 +48,16 @@ public sealed class LauncherSettings
 
     public bool BackupSavesBeforeInstall { get; set; } = true;
 
+    /// <summary>Look for a newer release on GitHub when the launcher opens (and every few hours).</summary>
+    public bool CheckForUpdates { get; set; } = true;
+
+    /// <summary>Where releases come from: owner/repo on GitHub, and the API to ask.</summary>
+    public string UpdateRepo { get; set; } = ReleaseFeed.DefaultRepo;
+    public string UpdateApiBase { get; set; } = ReleaseFeed.DefaultApiBase;
+
+    /// <summary>Show "Playing Rewind Together - Hosting a video store" on the player's Discord profile.</summary>
+    public bool DiscordStatus { get; set; } = true;
+
     public string? LastJoinAddress { get; set; }
     public string? LastJoinSteamId { get; set; }
 
@@ -80,5 +90,7 @@ public sealed class LauncherSettings
         if (GuestTunnelPort is < 1 or > 65535) GuestTunnelPort = 27016;
         if (MaxGuests is < 1 or > 16) MaxGuests = 7;
         CatalogUrl ??= "";
+        if (string.IsNullOrWhiteSpace(UpdateRepo)) UpdateRepo = ReleaseFeed.DefaultRepo;
+        if (string.IsNullOrWhiteSpace(UpdateApiBase) || !ReleaseFeed.IsAllowedUrl(UpdateApiBase)) UpdateApiBase = ReleaseFeed.DefaultApiBase;
     }
 }

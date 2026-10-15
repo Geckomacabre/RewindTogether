@@ -25,8 +25,13 @@ download) walks hosts and guests through every step.
    main menu. You don't need a save of your own.
 
 Everyone needs the same version of the mod and the same version of the game. If Steam
-updates Retro Rewind, wait for a mod update before playing together. To update the mod,
-unzip the new download and open its launcher: it updates the mod by itself.
+updates Retro Rewind, wait for a mod update before playing together.
+
+**Updating:** when a new version is out, the launcher shows a green banner. Press **Update**: it
+downloads the new version from this project's GitHub releases, checks it, replaces itself and
+the mod, and restarts, in about a minute. Your saves and settings stay as they are. Update when
+you're not in a co-op session, and update together so you both have the same version. (From
+1.7.1 on; a 1.7.0 launcher needs one last manual download.)
 
 ---
 
@@ -61,6 +66,17 @@ Verified in game, on both screens:
   the new-day banner.
 
 **Only the host saves.** Guests' own saves are never read or written.
+
+**Other mods.** Rewind Together doesn't share or download mods. Before you join, the launcher
+compares your mods with the host's and tells you what differs: the Rewind Together version
+(must match), content mods such as `.pak` and Blueprint mods (should match, or things go
+missing), and UE4SS script mods (usually fine). You can still choose "Join anyway".
+
+**Discord.** While the game runs, your Discord profile says **Playing Rewind Together** and what
+you're doing: hosting a video store, visiting a friend's store, running the store solo, or in
+the main menu. It also shows how many players are in the store and gives a link to this
+project. Nobody's name, address or Steam ID is shown. It needs the Discord app running on the
+same PC, and you can switch it off under Diagnostics.
 
 ---
 
@@ -100,7 +116,7 @@ console window takes them too, if you have turned it on. A fresh install doesn't
 
 ---
 
-## Known limitations (1.7.0)
+## Known limitations (1.7.1)
 
 - **A guest's own game also runs each click locally.** You may occasionally see an object
   jump for a moment before the host's version arrives. The host's version always wins.

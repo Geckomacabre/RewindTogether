@@ -27,7 +27,7 @@ namespace RewindTogether.Launcher.Steam;
 ///   {"cmd":"friends"}
 ///   {"cmd":"host","gamePort":27015,"friendsOnly":true,"maxGuests":7}
 ///   {"cmd":"join","host":"7656...","localPort":27016}
-///   {"cmd":"presence","on":true}
+///   {"cmd":"presence","on":true,"mods":{"rt_ver":"1.7.1",...}}   (mods: ModFingerprint.ToPresence)
 ///   {"cmd":"invite","friend":"7656..."}
 ///   {"cmd":"stop"}
 /// Events (agent -> launcher):
@@ -46,6 +46,7 @@ public sealed class SteamAgent
     private TunnelHost? _host;
     private TunnelGuest? _guest;
     private bool _presenceOn;
+    private Dictionary<string, string> _presenceMods = new();
     private bool _stop;
     private DateTime _nextStats;
 
@@ -238,6 +239,10 @@ public sealed class SteamAgent
             }
 
             case "presence":
+                if (cmd["mods"] is JsonObject mods)
+                    _presenceMods = mods
+                        .Where(kv => ModFingerprint.PresenceKeys.Contains(kv.Key) && kv.Value is JsonValue)
+                        .ToDictionary(kv => kv.Key, kv => (string?)kv.Value ?? "");
                 SetPresence((bool?)cmd["on"] ?? false);
                 break;
 
@@ -266,6 +271,8 @@ public sealed class SteamAgent
             api.SetRichPresence("rt_host", "1");
             api.SetRichPresence("connect", ConnectString(api.LocalSteamId));
             api.SetRichPresence("status", "Hosting a Rewind Together co-op store");
+            // What a guest must match (ModFingerprint): checked by their launcher before joining.
+            foreach (var (key, value) in _presenceMods) api.SetRichPresence(key, value);
         }
         else
         {
@@ -274,6 +281,7 @@ public sealed class SteamAgent
             api.SetRichPresence("rt_host", "");
             api.SetRichPresence("connect", "");
             api.SetRichPresence("status", "");
+            foreach (string key in ModFingerprint.PresenceKeys) api.SetRichPresence(key, "");
         }
         _presenceOn = on;
         Emit(new JsonObject { ["evt"] = "presence", ["on"] = on });
@@ -303,14 +311,22 @@ public sealed class SteamAgent
         {
             bool inGame = f.PlayingAppId == GameInstall.AppId;
             bool hosting = inGame && api.GetFriendRichPresence(f.Id, "rt_host") == "1";
-            arr.Add(new JsonObject
+            var friend = new JsonObject
             {
                 ["id"] = f.Id.ToString(),
                 ["name"] = f.Name,
                 ["state"] = f.PersonaState,
                 ["inGame"] = inGame,
                 ["hosting"] = hosting,
-            });
+            };
+            if (hosting)
+            {
+                var mods = new JsonObject();
+                foreach (string key in ModFingerprint.PresenceKeys)
+                    if (api.GetFriendRichPresence(f.Id, key) is { Length: > 0 } v) mods[key] = v;
+                if (mods.Count > 0) friend["mods"] = mods;
+            }
+            arr.Add(friend);
         }
         Emit(new JsonObject { ["evt"] = "friends", ["friends"] = arr });
     }
@@ -462,7 +478,13 @@ public sealed class SteamAgent
 }
 
 /// <summary>A friend as reported by the agent.</summary>
-public sealed record FriendInfo(ulong Id, string Name, int State, bool InGame, bool Hosting);
+public sealed record FriendInfo(ulong Id, string Name, int State, bool InGame, bool Hosting,
+    IReadOnlyDictionary<string, string>? Mods = null)
+{
+    /// <summary>The mods a hosting friend published, or null (not hosting, or an older launcher).</summary>
+    public ModFingerprint? Fingerprint =>
+        Mods == null ? null : ModFingerprint.FromPresence(k => Mods.TryGetValue(k, out var v) ? v : null);
+}
 
 public sealed record PeerInfo(ulong Id, string Name, string Link, long In, long Out, long InBytes, long OutBytes, double SinceIn, bool? GameConnected);
 
@@ -567,7 +589,17 @@ public sealed class SteamAgentClient : IAsyncDisposable
         return await tcs.Task;
     }
 
-    public void SetPresence(bool on) => Send(new JsonObject { ["cmd"] = "presence", ["on"] = on });
+    public void SetPresence(bool on, IReadOnlyDictionary<string, string>? mods = null)
+    {
+        var cmd = new JsonObject { ["cmd"] = "presence", ["on"] = on };
+        if (mods != null)
+        {
+            var m = new JsonObject();
+            foreach (var (k, v) in mods) m[k] = v;
+            cmd["mods"] = m;
+        }
+        Send(cmd);
+    }
 
     public void Invite(ulong friend) => Send(new JsonObject { ["cmd"] = "invite", ["friend"] = friend.ToString() });
 
@@ -674,8 +706,11 @@ public sealed class SteamAgentClient : IAsyncDisposable
                     foreach (var n in arr.OfType<JsonObject>())
                     {
                         if (!ulong.TryParse((string?)n["id"], out ulong id)) continue;
+                        var mods = (n["mods"] as JsonObject)?
+                            .Where(kv => kv.Value is JsonValue)
+                            .ToDictionary(kv => kv.Key, kv => (string?)kv.Value ?? "");
                         list.Add(new FriendInfo(id, (string?)n["name"] ?? "", (int?)n["state"] ?? 0,
-                            (bool?)n["inGame"] ?? false, (bool?)n["hosting"] ?? false));
+                            (bool?)n["inGame"] ?? false, (bool?)n["hosting"] ?? false, mods));
                     }
                 }
                 lock (_gate) _friends?.TrySetResult(list);

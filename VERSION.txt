@@ -1,6 +1,6 @@
 Rewind Together
-Version: 1.7.0
-Built:   2026-10-14
+Version: 1.7.1
+Built:   2026-10-15
 Game:    Retro Rewind (Steam AppID 3552140)
 Engine:  Unreal Engine 5.4
 Needs:   UE4SS 3.x
@@ -12,6 +12,38 @@ Unreal refuses mismatched builds.
 
 Check with:  rt.status   in the game's console (press ~ twice,
 type it, press Enter), or the launcher's Play tab.
+
+
+CHANGES IN 1.7.1  -  the launcher updates itself, checks
+                     mods before you join, and shows on
+                     Discord.
+------------------------------------------------------
+  * NEW: one-click updates. When a new version is out, the
+    launcher shows a green banner. Press Update: it downloads
+    the release from GitHub, checks its SHA-256, replaces
+    itself and the mod, and restarts with your saves and
+    settings as they were. Not during a co-op session.
+    A 1.7.0 launcher can't do this yet, so get 1.7.1 by hand
+    once; from then on, Update does it.
+
+  * NEW: mod check before joining. While its store is open,
+    the host's launcher publishes its Rewind Together version
+    and its other mods through Steam. Before a guest joins,
+    their launcher says what differs: another version (red),
+    other content mods such as .pak and Blueprint mods
+    (yellow), other script mods (a note). "Join anyway" still
+    works. Nothing is downloaded.
+
+  * NEW: Discord status. With the Discord app open, your
+    profile says "Playing Rewind Together": hosting a video
+    store, visiting a friend's store, running the store, or
+    in the main menu, with the player count and a link to
+    the project. Nobody's name, address or Steam ID is shown.
+    Switch it off under Diagnostics.
+
+  * The mod itself is the same as in 1.7.0 apart from its
+    version number. Host and guests still need the same
+    version.
 
 
 CHANGES IN 1.7.0  -  tested on two copies of the game at

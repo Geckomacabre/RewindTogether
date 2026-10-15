@@ -57,7 +57,7 @@ public sealed class HttpDownloader : IDownloader
             {
                 await CopyWithProgress(File.OpenRead(uri.LocalPath), part, new FileInfo(uri.LocalPath).Length, progress, ct);
             }
-            else if (uri.Scheme == Uri.UriSchemeHttps)
+            else if (uri.Scheme == Uri.UriSchemeHttps || (uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback))
             {
                 using var resp = await Http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, ct);
                 if (!resp.IsSuccessStatusCode)
@@ -69,7 +69,7 @@ public sealed class HttpDownloader : IDownloader
             }
             else
             {
-                throw new DownloadException("Only https:// downloads are allowed.");
+                throw new DownloadException("Only https:// downloads are allowed (plain http only to this PC, for tests).");
             }
 
             var fi = new FileInfo(part);

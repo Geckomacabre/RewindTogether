@@ -213,6 +213,61 @@ is zipped into `Documents\RewindTogether Backups\SaveGames-yyyyMMdd-HHmmss.zip`.
 has open is still read. The backup is skipped if nothing changed since the last one, and old
 backups are never deleted.
 
+**Mod check before joining** (`Core\ModFingerprint.cs`). While its store is open, the host's
+Steam helper publishes five rich presence keys next to `rt_host`: `rt_ver` (the installed Rewind
+Together version), `rt_cmods`/`rt_cnames` (content mods: enabled `~mods` and `LogicMods` paks,
+as `count:hash` over kind, name and size, plus as many names as fit in Steam's 255 characters)
+and `rt_smods`/`rt_snames` (UE4SS script mods, without UE4SS's own and Rewind Together). The
+guest's friend list marks a host whose mods differ, and JOIN explains what differs and asks
+("Join anyway" / "Cancel"). A typed Steam ID or Steam's "Join Game" looks the host up through
+the session's Steam helper first. A different version is shown in red, different content mods
+in yellow, and script mods alone as a note. A host with an older launcher publishes nothing, so
+nothing is compared. Nothing is downloaded: other people's mods are theirs to share.
+
+**Self-update** (`Core\SelfUpdate.cs`). At startup, and every six hours while open, the launcher
+asks GitHub for the project's latest release (`GET /repos/<UpdateRepo>/releases/latest`,
+unauthenticated). Releases, not commits: a release holds the built zip. When its version is newer
+than the folder's own (the bundled `mod.json`, else the launcher's version), a green banner offers
+**Update**:
+
+1. download the release zip into `<launcher folder>\.rt-update`, checking it against the SHA-256
+   GitHub publishes for every release asset (`"digest": "sha256:..."`; a `<zip>.sha256` asset is
+   the fallback, and a release with neither is not installed automatically);
+2. unpack it and check it holds `RewindTogetherLauncher.exe` and a complete mod of exactly that
+   version;
+3. move each item of the release into the folder, the old one aside first. The running exe is
+   renamed, which Windows allows. Every move is retried for up to two seconds, because an
+   antivirus scan can hold a fresh exe; measured in the tests, about one rename in eight
+   failed once. Any failure puts every moved item back;
+4. start the new launcher with `--after-update <pid> --updated-from <version>`, passing on
+   `--data-dir` and `--game-dir`, and exit. The new launcher waits for the old one, deletes
+   `.rt-update` with the old exe in it, and installs the bundled mod update like any newer zip.
+
+Refused, with a plain message: during a co-op session (the launcher carries the Steam
+connection), from a folder it cannot write to (offers the release page instead), or from inside
+the zip. Settings: `CheckForUpdates` (Diagnostics > "Tell me when a new version ... is out",
+with **Check now**), `UpdateRepo`, `UpdateApiBase`. Plain http is accepted only to this PC, for
+the tests. End to end, measured with the published exe and a stand-in GitHub on 127.0.0.1:
+banner, Update, restart with its folders kept, mod 9.9.9 in the (fake) game, about 14 seconds.
+
+**Discord status** (`Core\DiscordPresence.cs`). While the game runs, the launcher tells the
+Discord app on the same PC what to show, over Discord's local RPC pipe (`\\.\pipe\discord-ipc-0`
+to `-9`: 8-byte header of opcode and length, then JSON; handshake with the application id, then
+`SET_ACTIVITY`). The Discord application "Rewind Together" (id `1560334255547093155`, owned by
+the project) supplies the name, so the profile says "Playing Rewind Together". Its Rich Presence
+art asset `logo` is the picture. Only the application id is in the code; no secret or token is
+needed or kept. The status is set for the game's process id, so Discord can show it in place of
+its plain "Playing Retro Rewind", and Discord drops it when the game closes. It shows what is
+happening (hosting / visiting a friend's store / running the store / main menu), the player
+count, the time played, and a "Get Rewind Together" button linking to `UpdateRepo`. It never
+names the host, because direct joins only know an IP address and a friend never agreed to
+appear on someone else's profile. A background thread sends only on a change, at most every
+4 s (Discord allows 5 per 20 s), retries every 30 s when Discord isn't running, and clears the
+status when the launcher closes. Setting: `DiscordStatus` (Diagnostics > "Show 'Playing Rewind
+Together' on my Discord profile", with what Discord last accepted). Checked against the real
+Discord app in October 2026: it accepted the activity as "Rewind Together", with the `logo`
+asset resolved and the button URL attached.
+
 ---
 
 ## The contract (docs\LAUNCHER_CONTRACT.md)
@@ -332,7 +387,7 @@ and no tunnel, and is meant for LAN or VPN.
 
 ---
 
-## Tests (`RewindTogether.Launcher.Tests`, xUnit, 181 tests)
+## Tests (`RewindTogether.Launcher.Tests`, xUnit, 223 tests)
 
 * **VDF / ACF parsing** (fixture text): current and legacy `libraryfolders.vdf`, escapes,
   comments, malformed input; locating the game across fake libraries; custom `installdir`; manual
@@ -370,6 +425,13 @@ and no tunnel, and is meant for LAN or VPN.
   * Steam "Join Game" becomes a `joinRequest`; invites; fatal init; exit when stdin closes
   * client-side parsing of every event
 * **Command line and save backups.**
+* **Discord status against a fake Discord** (a real named pipe speaking Discord's frames):
+  * what each state says, with no one named, and text kept within Discord's limits
+  * the handshake carries the application id, and `SET_ACTIVITY` carries the process id
+  * Discord's errors come back as text; a refused handshake is not a connection
+  * without Discord, connecting fails quickly and quietly
+  * the service sends only on a change, clears the status for the game's process when the game
+    closes, clears it on shutdown, and never connects when there is nothing to show
 * **Host slot (contract §1)**:
   * the exact `{"action":"host","slot":"Player_Save1","written":...}` string
   * all five slots

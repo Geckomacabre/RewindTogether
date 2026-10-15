@@ -36,6 +36,7 @@ public sealed class DiagnosticsViewModel : ObservableObject
         SaveSettingsCommand = new RelayCommand(SaveSettings);
         ShowLogCommand = new RelayCommand(p => { LogName = p as string ?? "RewindTogether.log"; LoadLog(); });
         RefreshCommand = new RelayCommand(() => { _main.RefreshGame(); Refresh(); });
+        CheckForUpdatesCommand = new AsyncCommand(() => _main.CheckForUpdatesAsync(manual: true));
 
         _catalogUrl = main.Settings.CatalogUrl;
         _guestPort = main.Settings.GuestTunnelPort.ToString();
@@ -65,6 +66,31 @@ public sealed class DiagnosticsViewModel : ObservableObject
         get => _main.Settings.BackupSavesBeforeInstall;
         set { _main.Settings.BackupSavesBeforeInstall = value; _main.SaveSettings(); Raise(); }
     }
+
+    public bool CheckForUpdates
+    {
+        get => _main.Settings.CheckForUpdates;
+        set
+        {
+            _main.Settings.CheckForUpdates = value;
+            _main.SaveSettings();
+            Raise();
+            if (value) _ = _main.CheckForUpdatesAsync(manual: false);
+        }
+    }
+
+    public string UpdateStatus => _main.UpdateStatus;
+    public ICommand CheckForUpdatesCommand { get; }
+    public void RaiseUpdateStatus() => Raise(nameof(UpdateStatus));
+
+    public bool DiscordStatus
+    {
+        get => _main.Settings.DiscordStatus;
+        set { _main.Settings.DiscordStatus = value; _main.SaveSettings(); Raise(); }
+    }
+
+    public string DiscordStatusText => _main.DiscordStatusText;
+    public void RaiseDiscordStatus() => Raise(nameof(DiscordStatusText));
 
     public string LastBackup => SaveBackup.LatestBackup(_main.Paths.BackupsDir) is { } b
         ? $"{Path.GetFileName(b)} ({File.GetLastWriteTime(b):g})" : "none yet";

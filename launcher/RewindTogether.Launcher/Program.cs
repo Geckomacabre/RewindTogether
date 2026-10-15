@@ -35,6 +35,10 @@ public static class Program
         Log.Info($"Launcher {AppInfo.Version} starting: {string.Join(' ', argv)}");
         foreach (var p in args.Problems) Log.Warn(p);
 
+        // Started by the self-update: the old launcher is closing to make room, and the
+        // single-instance check below would otherwise find it still there.
+        if (args.AfterUpdatePid is int oldPid) UpdateInstaller.WaitForExit(oldPid, TimeSpan.FromSeconds(30));
+
         // One launcher per user (per data folder, so a --data-dir test copy can run beside the real one).
         using var single = new SingleInstance(paths.DataDir);
         if (!single.TryAcquire())
@@ -49,6 +53,9 @@ public static class Program
                 "Rewind Together", MessageBoxButton.OK, MessageBoxImage.Warning);
             return 1;
         }
+
+        // What an update left behind (the old exe among it) can go now that it is not running.
+        if (Path.GetDirectoryName(Environment.ProcessPath) is string exeDir) UpdateInstaller.CleanUp(exeDir);
 
         var app = new App();
         app.InitializeComponent();
