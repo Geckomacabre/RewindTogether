@@ -283,7 +283,7 @@ public class RewindTogetherInstallTests
     {
         using var t = new TempDir();
         var g = Fixtures.FakeGame(t);
-        // what Install-RewindTogether.ps1 leaves behind: folder + enabled.txt + mods.txt line
+        // what 1.6's Install-RewindTogether.ps1 (since removed) left behind: folder + enabled.txt + mods.txt line
         Fixtures.WriteAt(Path.Combine(g.RewindTogetherDir, "Scripts", "main.lua"), "-- old");
         Fixtures.WriteAt(Path.Combine(g.RewindTogetherDir, "enabled.txt"), "");
         ModsTxt.Update(g.ModsTxt, d => d.SetEnabled("RewindTogether", true));

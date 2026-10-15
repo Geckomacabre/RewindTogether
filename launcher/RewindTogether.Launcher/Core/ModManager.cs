@@ -513,7 +513,7 @@ public sealed class ModManager
 }
 
 /// <summary>
-/// Rewind Together's config.lua rules, carried over from Install-RewindTogether.ps1:
+/// Rewind Together's config.lua rules, carried over from 1.6's Install-RewindTogether.ps1 (since removed):
 /// a user-edited config.lua survives updates as long as its Config.ConfigVersion matches the
 /// new one. When the version changed, the old file is kept beside the mod folder
 /// (RewindTogether-config.lua.v&lt;N&gt;-backup) and the new default is installed, because keeping an

@@ -366,27 +366,27 @@ There are **two copies of the mod** and they must be kept in sync.
 
 | | Path |
 |---|---|
-| **Source of truth** (edit here) | `D:\SteamLibrary\steamapps\common\RetroRewind\RewindTogether\Mods\RewindTogether\Scripts\` |
-| **Deployed** (what the game loads) | `D:\SteamLibrary\steamapps\common\RetroRewind\RetroRewind\Binaries\Win64\ue4ss\Mods\RewindTogether\Scripts\` |
+| **Source of truth** (edit here) | `Mods\RewindTogether\Scripts\` in this repo |
+| **Deployed** (what the game loads) | `<game>\RetroRewind\Binaries\Win64\ue4ss\Mods\RewindTogether\Scripts\` |
 
-`Install-RewindTogether.ps1` deploys by deleting the target folder and
-recursive-copying the source over it. During development it is quicker to copy
-the changed `.lua` files directly — but **always copy**, or you will spend an
-hour debugging a fix the game never loaded.
+`dev/deploy.sh` copies the scripts, `mod.json` and the native DLL into the
+game, keeping the player's own `config.lua`. **Always deploy** after an edit, or
+you will spend an hour debugging a fix the game never loaded. Players install
+through the launcher, from the release zip `dev/package.py` builds. (1.6's
+installer, uninstaller and standalone Steam tunnel scripts are gone: the
+launcher does all three.)
 
-Other things in the project root:
+Other things in the repo:
 
 | File | What it does |
 |---|---|
-| `Install-RewindTogether.ps1` | Full installer: UE4SS check, mod deploy, `mods.txt` wiring, transport profile. Preserves a user-edited `config.lua` when `Config.ConfigVersion` matches. |
-| `Uninstall-RewindTogether.ps1` | Reverses it. |
-| `Enable-DirectHosting.ps1` | Firewall rule + UPnP port forward for UDP 27015, prints the public IP. Driven by `OPEN PORT FOR FRIENDS.bat`. |
-| `Check-Connection.ps1` | Reads the game's **real** listening socket. This is the authority on what port is actually in use — see §5. |
-| `Test-Inbound.ps1` | Confirms UDP 27015 is reachable from outside. |
-| `Check-Mod.py` | Parses *and runs* both copies against a fake UE4SS. Run before every deploy — see §7. |
+| `launcher\` | The launcher (C# WPF): install, update, host/join, Steam relay. Built by `publish.ps1`. |
+| `native\RewindNative\` | The native helper's source; `build.bat` runs its tests, then builds the DLL. |
+| `dev\` | The two-copy test rig (`coop_test.py`, `bridge.py`, `deploy.sh`) and `package.py`. |
+| `Enable-DirectHosting.ps1` | Firewall rule + UPnP port forward for UDP 27015, prints the public IP. Driven by `OPEN PORT FOR FRIENDS - Double click me.bat`; `Disable-DirectHosting.bat` undoes it. Ships in the release zip. |
+| `Check-Connection.ps1` | Reads the game's **real** listening socket. This is the authority on what port is actually in use — see §5. Driven by `CHECK CONNECTION - Double click me.bat`; ships in the release zip. |
+| `Check-Mod.py` | Parses *and runs* the mod against a fake UE4SS. Run before every deploy — see §7. |
 | `test\` | The fake engine and the smoke test `Check-Mod.py` drives. |
-| `tunnel\RewindTunnel.exe` | Standalone Steam-relay UDP tunnel, used when port forwarding is not an option. Host and guest each run their own; the peer SteamID is hardcoded in the `START TUNNEL` batch files, one per side. |
-| `config\Engine.DirectIP.ini`, `config\Engine.SteamP2P.ini` | Transport profiles the installer copies in. Largely vestigial — see §5, the game wipes user `Engine.ini` on launch. |
 | `VERSION.txt` | Changelog, written as "what the bug actually was". Worth reading in full. |
 | `README.md` | User-facing docs. |
 | `FRIEND - START HERE.txt` | Guest-side setup instructions. |

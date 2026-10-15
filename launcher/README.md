@@ -140,7 +140,7 @@ pinned, and why, is explained under "Deviations" below.*
   `net.lua` modules, so it always lands in `ue4ss\Mods\RewindTogether`, whatever the download is
   called. The whole folder is installed, including `native\RewindNative.dll`.
   `RewindTogether : 1` goes directly above `; Built-in keybinds, do not move up!`. A copy
-  installed by hand with `Install-RewindTogether.ps1` is adopted and replaced cleanly, including
+  installed by hand with 1.6's `Install-RewindTogether.ps1` (no longer in the repo) is adopted and replaced cleanly, including
   its `enabled.txt`.
 * **All-or-nothing installs.** Every install, update and uninstall, for any mod, is staged and
   swapped:
@@ -488,7 +488,7 @@ above, the launcher was never run against the real game:
    `rewind-together` (from `mod.json`) but its UE4SS folder must be `RewindTogether`.
 4. **`config.lua` is kept when its `Config.ConfigVersion` matches the new one.** When the version
    changed, the old file is saved as `ue4ss\Mods\RewindTogether-config.lua.v<N>-backup` and the new
-   default is installed. This is the rule from `Install-RewindTogether.ps1` and PROJECT.md §8:
+   default is installed. This is the rule 1.6's `Install-RewindTogether.ps1` used and PROJECT.md §8 explains:
    keeping an old config across a schema change re-applies settings the new code no longer
    expects. If the new `config.lua` has no ConfigVersion at all, the player's file is kept.
 5. **The launcher also keeps `mods.json` in step** when it exists. This UE4SS build reads only
