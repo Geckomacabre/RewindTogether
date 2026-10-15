@@ -36,6 +36,6 @@ if exist test_namecache.cpp (
 
 rem /MT: static CRT, so the DLL needs nothing installed beyond what the game has.
 cl /nologo /LD /O2 /MT /EHsc /W4 /std:c++17 /Fo"obj\\" RewindNative.cpp ^
-   /link /OUT:"%OUT%\RewindNative.dll" /IMPLIB:obj\RewindNative.lib /PDB:obj\RewindNative.pdb /DEBUG /INCREMENTAL:NO /OPT:REF /OPT:ICF
+   /link /OUT:"%OUT%\RewindNative.dll" /IMPLIB:obj\RewindNative.lib /PDB:obj\RewindNative.pdb /PDBALTPATH:%%_PDB%% /DEBUG /INCREMENTAL:NO /OPT:REF /OPT:ICF
 if errorlevel 1 exit /b 1
 echo Built %OUT%\RewindNative.dll
