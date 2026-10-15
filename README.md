@@ -150,3 +150,11 @@ To remove the mod, use **Uninstall** in the launcher's Mods tab (close the game 
 - **UE4SS** by the UE4SS team (github.com/UE4SS-RE/RE-UE4SS), MIT license.
 - **Retro Rewind** by its developers. This mod is not affiliated with or endorsed by them.
   Please buy the game; the mod needs your own copy to work.
+
+## License
+
+Rewind Together is free to use, change and share for **noncommercial** purposes under the
+[PolyForm Noncommercial License 1.0.0](LICENSE) (`LICENSE.txt` in the download). Nobody may
+sell it. The developer and publisher of Retro Rewind are additionally allowed to use it for
+any purpose, including building it into the game. UE4SS, which the launcher installs, is
+under its own MIT license.

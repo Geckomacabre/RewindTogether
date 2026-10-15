@@ -36,6 +36,7 @@ MOD = os.path.join(ROOT, "Mods", "RewindTogether")
 
 FILES = [
     ("launcher/dist/RewindTogetherLauncher.exe", "RewindTogetherLauncher.exe"),
+    ("LICENSE", "LICENSE.txt"),
     ("README.md", "README.md"),
     ("FRIEND - START HERE.txt", "FRIEND - START HERE.txt"),
     ("VERSION.txt", "VERSION.txt"),
