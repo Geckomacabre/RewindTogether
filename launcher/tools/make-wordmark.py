@@ -1,6 +1,9 @@
 """Draws the REWIND TOGETHER sticker logo as a square PNG, for Discord and anywhere else square.
 
-    py -P launcher/tools/make-wordmark.py dist/discord/logo-wordmark.png [size]
+    py -P launcher/tools/make-wordmark.py dist/discord/logo-wordmark.png [size] [transparent]
+
+With "transparent", everything outside the sticker is see-through and the picture is cropped to
+it (docs/images/logo.png, for the README on light and dark pages alike).
 
 Needs Pillow, numpy, scipy and Windows' Segoe UI Black. An original mark in the bright sticker
 style of the game's own logo: an "RT" monogram whose T ends in a rewind arrow, the two words in
@@ -14,6 +17,7 @@ from scipy import ndimage
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "logo-wordmark.png"
 SIZE = int(sys.argv[2]) if len(sys.argv) > 2 else 1024
+TRANSPARENT = len(sys.argv) > 3 and sys.argv[3] == "transparent"
 S = SIZE * 2                                  # working size
 BG = (10, 9, 14)
 PINK = (255, 24, 146)
@@ -81,7 +85,7 @@ band = outline & (ndimage.distance_transform_edt(outline) <= BAND)   # only its 
 # Centre the sticker vertically.
 rows = np.nonzero(outline.any(axis=1))[0]
 shift = (S - (rows[-1] - rows[0] + 1)) // 2 - rows[0]
-pink_a, cyan_a, band = (np.roll(a, shift, axis=0) for a in (pink_a, cyan_a, band))
+pink_a, cyan_a, band, outline = (np.roll(a, shift, axis=0) for a in (pink_a, cyan_a, band, outline))
 
 # --------------------------------------------------------------- paint
 img = np.empty((S, S, 3), dtype=np.float32)
@@ -90,5 +94,12 @@ band_a = ndimage.uniform_filter(band.astype(np.float32), 3)          # soften th
 for colour, alpha in ((PURPLE, band_a), (PINK, pink_a), (CYAN, cyan_a)):
     img = img * (1 - alpha[..., None]) + np.array(colour, np.float32) * alpha[..., None]
 out = Image.fromarray(np.clip(img + 0.5, 0, 255).astype(np.uint8), "RGB")
-out.resize((SIZE, SIZE), Image.LANCZOS).save(OUT)
+if TRANSPARENT:
+    alpha = ndimage.uniform_filter(outline.astype(np.float32), 3) * 255
+    out = out.convert("RGBA")
+    out.putalpha(Image.fromarray(np.clip(alpha + 0.5, 0, 255).astype(np.uint8), "L"))
+    out = out.resize((SIZE, SIZE), Image.LANCZOS)
+    out.crop(out.getchannel("A").point(lambda v: 255 if v > 8 else 0).getbbox()).save(OUT)
+else:
+    out.resize((SIZE, SIZE), Image.LANCZOS).save(OUT)
 print("wrote", OUT)
