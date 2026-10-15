@@ -1,0 +1,20 @@
+{
+  "catalog_version": 1,
+  "updated": "2026-10-14",
+  "_comment": "Built-in sample catalog. Set CatalogUrl in %APPDATA%\\RewindTogether\\launcher.json (or Diagnostics > Settings) to a hosted copy of this file to publish updates. Each entry: id, name, author, description, version, type (ue4ss-lua | pak | logicmod), url (https, may be empty = not downloadable yet), sha256 (required when url is set), size, homepage, and optional folder (UE4SS folder name when it differs from id).",
+  "mods": [
+    {
+      "id": "rewind-together",
+      "name": "Rewind Together",
+      "author": "Rewind Together team",
+      "description": "Co-op multiplayer for Retro Rewind. Open your video store to friends over Steam - no port forwarding, no IP addresses. Needs UE4SS.",
+      "version": "1.7.0",
+      "type": "ue4ss-lua",
+      "folder": "RewindTogether",
+      "url": "",
+      "sha256": "",
+      "size": 0,
+      "homepage": ""
+    }
+  ]
+}

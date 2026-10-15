@@ -1,0 +1,30 @@
+"AppState"
+{
+	"appid"		"3552140"
+	"universe"		"1"
+	"LauncherPath"		"C:\\Program Files (x86)\\Steam\\steam.exe"
+	"name"		"Retro Rewind - Video Store Simulator"
+	"StateFlags"		"4"
+	"installdir"		"RetroRewind"
+	"lastupdated"		"1783406470"
+	"SizeOnDisk"		"2240737226"
+	"buildid"		"23896268"
+	"LastOwner"		"76561190000000000"
+	"TargetBuildID"		"23896268"
+	"InstalledDepots"
+	{
+		"3552141"
+		{
+			"manifest"		"1240869478989807478"
+			"size"		"2240737226"
+		}
+	}
+	"SharedDepots"
+	{
+		"228989"		"228980"
+	}
+	"UserConfig"
+	{
+		"language"		"english"
+	}
+}

@@ -1,0 +1,63 @@
+===========================================================
+  REWIND TOGETHER  -  co-op for Retro Rewind   (v1.7.0)
+  Someone sent you this so you can play together.
+===========================================================
+
+
+STEP 1  -  INSTALL  (once)
+--------------------------
+
+  Unzip this folder anywhere and run:
+
+      RewindTogetherLauncher.exe
+
+  It finds Retro Rewind, installs what is missing (the UE4SS
+  loader and this mod) and backs up your saves first.
+  Nothing to edit, no IDs to swap.
+
+
+STEP 2  -  PLAY
+---------------
+
+  IF YOU ARE HOSTING (it is your store):
+    Press HOST MY STORE in the launcher. Pick your save in the
+    game like always and walk into your store. It opens to your
+    friends by itself.
+
+  IF YOU ARE VISITING:
+    In the launcher, under VISIT A FRIEND, pick the friend whose
+    store is open - or use "Other ways to join" and type the
+    address they give you. The game starts and connects straight
+    from the main menu. You do not need a save of your own.
+
+  Not on the same network? Either use the Steam route above
+  (new - tell us if it works for you), or both join the same
+  free VPN (Tailscale / ZeroTier / Radmin) and use the address
+  it gives the host.
+
+
+THINGS TO KNOW
+--------------
+
+  * It is the HOST's store and the HOST's save. Visiting never
+    touches your own saves.
+
+  * You can work the store: right-click picks up / uses,
+    left-click places, E / V / B switch tools, K sells.
+
+  * Both of you need the same mod version AND the same game
+    version. The launcher shows both.
+
+  * A black UE4SS window opens next to the game. That is
+    normal - leave it open.
+
+
+IF IT DOES NOT WORK
+-------------------
+
+  1. Launcher -> DIAGNOSTICS -> "Copy diagnostics", and send
+     that to whoever gave you the mod.
+  2. If the game ever crashes, just start it again. The mod
+     notes what it was doing, switches that one feature off on
+     the next launch and tells you which (type rt.safety in the
+     black window).

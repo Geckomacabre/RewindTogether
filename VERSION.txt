@@ -1,0 +1,1495 @@
+Rewind Together
+Version: 1.7.0
+Built:   2026-10-14
+Game:    Retro Rewind (Steam AppID 3552140)
+Engine:  Unreal Engine 5.4
+Needs:   UE4SS 3.x
+
+Everyone playing together must be on the SAME version of this mod
+AND the same version of the game. If one of you auto-updated Retro
+Rewind and the other did not, you will not be able to connect --
+Unreal refuses mismatched builds.
+
+Check with:  rt.status   in the UE4SS console.
+
+
+CHANGES IN 1.7.0  -  tested on two copies of the game at
+                     once, and guests can finally work the
+                     store.
+------------------------------------------------------
+  HOW IT WAS TESTED
+    Every change below was checked by running a host and a
+    guest on ONE PC (the second copy started directly, the
+    guest joining 127.0.0.1), driven through a developer-only
+    command bridge (devbridge.lua, inert unless its switch file
+    exists). Nothing here is from theory alone; each "measured"
+    has a log line or a screenshot behind it.
+
+  * FIXED: the host died the moment a guest joined.
+    rpcchan.lua passed a Lua string where ClientMessage takes an
+    FName. UE4SS does not convert it - it dereferences it, and
+    the process dies inside UE4SS (access violation at 0x70).
+    Reproduced on demand on a spare copy; FName("...") is fine.
+    The test harness now refuses a string for that parameter.
+
+  * FIXED: random crashes 40-150 s into a session, inside Lua's
+    garbage collector on garbage pointers. LoopAsync runs Lua on
+    UE4SS's own thread while the game thread runs this mod's
+    Lua - one Lua state, two threads. The tick loop now uses
+    LoopInGameThreadWithDelay (present in this UE4SS build);
+    keys are POLLED on the game thread (input.lua) instead of
+    RegisterKeyBind, whose callbacks also run off-thread; and
+    the left-mouse binding every click went through is gone
+    unless the experimental menu button is on.
+
+  * FIXED: guests crashed 1-3 minutes in on an engine worker
+    ("Foreground Worker", reading 0xffffffffffffffff), seven
+    times, always with NPC looks on. npcsync.lua cached the
+    meshes, textures and materials it had loaded in a Lua
+    table - and a Lua reference does not keep an Unreal object
+    alive. Once the NPCs using an asset despawned, garbage
+    collection freed it and the cache handed out the dangling
+    pointer. Found by disassembling the crash site and matching
+    the offset (+0x560) to the header dump: SkinnedAsset /
+    StaticMesh. Assets are looked up fresh every time now.
+    Soak: 8 minutes clean, was 109-161 s every run.
+    Hardening found on the way, kept: the RPC hooks only queue
+    and the mod's tick applies (Chan.pump); body swaps use
+    SetSkinnedAssetAndUpdate(mesh, true); material instances
+    are never created under a fixed name.
+
+  * FIXED: the mod itself cost frame rate - on every PC, in
+    single player too. UE4SS's FindAllOf / FindFirstOf walk
+    every object in the engine: 15-17 ms a call, whatever they
+    look for. Counted live for 10 s, the mod was spending 60%
+    of the host's game thread (53% of the guest's) in them.
+    ue.lua now asks the engine directly (GameplayStatics,
+    the GameInstance, soft-reference lookups) and keeps the
+    walk only as a rare fallback. Measured after: 2.4% on
+    both, mostly a backed-off search for listed classes this
+    save does not have. On the way, two memory leaks in how
+    UE4SS calls engine functions were found and worked
+    around (it keeps every out-parameter table forever); over
+    an 8-minute session the mod's Lua memory now holds at
+    2-4 MB (it had been climbing past 80 MB).
+
+  * NEW: guests can act in the store. RMB (use / pick up), LMB
+    (place / push), E, V, B and K are sent with the guest's
+    exact camera view and replayed on the host on the guest's
+    own pawn (guestinput.lua). Measured: a guest took "Rain
+    Woman" off a shelf; the host's copy of the guest held it,
+    the host held nothing, the guest saw it in hand. Measured
+    again after the fix below: a guest took a tape off the
+    rack and put it back, and both screens show it in its
+    slot.
+
+  * FIXED: things the host or a guest moved stayed where they
+    were on a guest's screen - a tape put back on the shelf
+    floated where the hand had been. On the guest, 395 of 396
+    tapes had bReplicateMovement off, so every position update
+    for them was dropped. Two causes, both measured: a
+    Blueprint actor does not take that flag from its class
+    default when it spawns, and with the host's class default
+    patched to true Unreal never sent the flag to guests at
+    all (it only sends values that differ from the default).
+    The host now leaves that one flag off the class defaults
+    and checks every actor's own flags all session long, not
+    once per class; a guest switches it on where it is still
+    off and applies the last position it was sent. After:
+    397 of 397 tapes on the guest have it.
+
+  * NEW: RewindNative.dll, a small native helper loaded by the
+    Lua mod with package.loadlib. The game's Blueprints find
+    "the player" with GetPlayerController(0) 410 times; on a
+    listen server that is always the host. For the length of a
+    replayed guest action those four functions answer with the
+    guest (rt.native test: PASS). No UE4SS C++ SDK needed.
+
+  * NEW: joining from the main menu. No save of your own is
+    needed; OpenLevel from the menu connects in ~2 s.
+
+  * NEW: the launcher (RewindTogetherLauncher.exe): finds the
+    game, installs UE4SS and the mod, a mod manager, host/join
+    buttons, Steam friends list, Steam-relay tunnel. The Steam
+    parts need real two-account testing.
+
+  * The guest's world now matches the host's:
+      - money, XP, level, store value (Core_Gamemode_C) and the
+        clock, weekday, season, weather (WeatherSystem_C) - the
+        old SyncedState names did not exist on this game;
+      - a HUD on the guest (hud.lua builds the game's own);
+      - the store sign and its neon colours, bought
+        expansions (worldsync.lua);
+      - the season scenery level (snow, bare trees), loaded
+        with the game's own WeatherSystem function;
+      - sky, sun, fog, fill lights and Global_Weather values,
+        copied as RESULTS rather than recomputed;
+      - the store sign's neon (its materials are made by a load
+        path a guest never runs);
+      - the town's NPCs: body, clothes, tints, hair and the
+        animation inputs their AnimBP reads (npcsync.lua).
+
+  * FOUND: the yellow-and-black "hazard stripes" a guest saw
+    for five versions are NavCollisionZone ghost-mode blockers.
+    The host's GameMode hides them at load; a guest has no
+    GameMode. They are hidden on the guest now.
+
+  * The local GameMode experiment is OFF by default: it started
+    a whole new game on the guest (tutorial, $550, the default
+    sign) and could have saved into the guest's own save slot.
+
+  * Steam P2P side-channel off unless Config.UseSteamP2P = true:
+    it cannot send on this build and told every guest money
+    would not sync, which stopped being true in 1.6.0.
+
+  * Smaller: Net.VERSION said 1.5.8; TAB (the game's rotate key)
+    no longer toggles the player list; struct fields are read
+    case-insensitively (FRotator comes back as "pitch"); the
+    "Join FAILED" message after a session ended normally is now
+    "the connection to the host ended".
+
+
+CHANGES IN 1.6.1  -  1.6.0 crashed the host the moment a
+                     guest joined. That was the animation
+                     search, and the rule against it was
+                     already written down.
+------------------------------------------------------
+  * FIXED: fatal error on the host, immediately on join.
+
+    The log ends at "a player joined (2 connected)" and the
+    next thing to run is Bodies.dress, which in 1.6.0 called:
+
+        for _, seq in ipairs(FindAllOf("AnimSequence") or {})
+
+    PROJECT.md 5 says, in as many words: never do a full
+    sweep, because walking the object array and calling
+    GetFullName() on every entry touches objects that are
+    mid-construction or already freed, and it crashed the
+    process on launch once already. A game with a full
+    character animation set has thousands of AnimSequences.
+    pcall does not catch an access violation.
+
+    The rule existed. It was read at the start of the session
+    that broke it. It got written anyway, to fix a cosmetic
+    complaint about an idle animation.
+
+  * Config.DriveBodyAnimation now defaults to FALSE and is
+    checked with == true, not ~= false.
+
+    That is the opposite of every other flag in bodies.lua,
+    and deliberately so: the others default on because their
+    absence is harmless. A missing value must never re-enable
+    something that has already taken the game down. An
+    existing config.lua predating the option therefore gets
+    it OFF, which is the correct answer for the two configs
+    currently in the world.
+
+    The search itself is capped at 400 sequences, checks
+    UE.alive rather than UE.valid on each, and runs behind
+    its own crash breadcrumb - a separate one from bodies, so
+    retiring it does not cost you seeing your friend at all.
+
+  * The same shape of bug, found by looking rather than by
+    crashing: Inspect.clearOverlays sweeps three component
+    classes and runs AUTOMATICALLY on a guest. Same pattern,
+    same risk, and it had not fired yet only because the host
+    died first. Capped at 1500 per class, liveness-checked,
+    and put behind a breadcrumb.
+
+  * The first ClientMessage of a session goes behind a
+    breadcrumb too. Handing a Lua string to an FName
+    parameter is a marshalling step and a bad one is a native
+    fault. Once a call returns alive the shape is proven and
+    the guard comes off, so it costs nothing per packet.
+
+  * Test: "the animation search is off by default" - asserted,
+    so this cannot be quietly switched back on later.
+
+
+CHANGES IN 1.6.0  -  the side-channel was never needed.
+                     The connection was already there.
+------------------------------------------------------
+  * THE SIDE-CHANNEL WORKS NOW, AND IT IS NOT STEAM.
+
+    sync.lua - money, the clock, the day, everything -
+    opened with:
+
+        if not cfg or not P2P.isReady() then return end
+
+    P2P.isReady() has been FALSE on every run since 1.5.7,
+    when it was measured that FSteamID wraps a uint64, UE
+    cannot make that a UPROPERTY, the struct has zero
+    reflected fields, and 22 argument shapes were refused.
+    That channel is not unfinished. It cannot exist here.
+
+    So for five versions this function returned on its first
+    line while a guest stood in the store, and everything
+    downstream of it was decoration.
+
+    Meanwhile both machines have had a live, reliable,
+    ordered UNetConnection since the moment the guest joined.
+
+      HOST -> GUEST: APlayerController::ClientMessage(FString,
+      FName, float) is UFUNCTION(Reliable, Client) in stock
+      Engine. Called on the server against a remote
+      controller, it runs on that player's machine carrying
+      an arbitrary string. The guest hooks the same function
+      to receive - it is an RPC, so it carries reflection
+      data by definition and is hookable.
+
+      GUEST -> HOST: ServerSetSpectatorLocation(FVector,
+      FRotator) is UFUNCTION(unreliable, server) and carries
+      six floats - which is EXACTLY the payload a forwarded
+      interaction needs, being the position and direction the
+      guest was looking from. Nothing stringified, nothing
+      interned. Safe to borrow because this game has no
+      spectators, so the engine never calls it here.
+
+    No Steam. No ports. No Steam IDs to swap. No config. It
+    works the instant somebody joins, because it IS the join.
+
+    Wire format is unchanged - P2P.encode/decode, already
+    round-trip tested - so a message reaching a handler looks
+    identical whichever channel carried it.
+
+  * A GUEST CAN ASK TO INTERACT WITH THINGS. Sync.request-
+    Interact refused outright unless both players had typed
+    the other's Steam ID into config.lua, which is why
+    picking anything up has never worked for a guest. It goes
+    over the connection now and needs nothing from anybody.
+
+    ForwardGuestInteractions is checked with ~= false, so a
+    config.lua predating the option still gets it. A guest
+    who cannot touch anything is not a co-op mod.
+
+  * THE BODY STOPS WALKING IN CIRCLES. Reported: the borrowed
+    body "appears to move in a circle" and idles far more
+    than it walks.
+
+    That is what borrowing an animation blueprint buys. The
+    donor is AI_WalkBy_Character_C and its AnimBP is written
+    to drive a wandering pedestrian - it reads that NPC's own
+    state, decides for itself what the character is doing,
+    and on a Player_Character_C it is reading nothing and
+    guessing. There is no variable to correct. It is somebody
+    else's graph.
+
+    So stop asking it. The mod now finds idle/walk/run
+    sequences that fit the borrowed skeleton, and plays them
+    directly off the pawn's measured speed - AActor::Get-
+    Velocity is reflected, and replicated movement keeps it
+    current on a simulated proxy. PlayAnimation switches the
+    component to single-node mode, which takes the blueprint
+    out of the picture entirely.
+
+    If no sequences fit the skeleton, the blueprint stays in
+    charge and the log says so. Config.DriveBodyAnimation.
+
+  * A DROPPED MOVIE THAT HANGS IN MID-AIR ON THE GUEST: one
+    candidate ruled out rather than fixed, honestly labelled.
+
+    A dormant actor stops sending updates entirely - the
+    guest keeps the last position it was told and nothing
+    ever corrects it, which is that symptom exactly. A
+    single-player game has every reason to mark its scenery
+    dormant, and DORM_Initial means "never replicate after
+    spawn", which from outside is indistinguishable from a
+    dead channel. NetDormancy is forced to DORM_Awake and
+    FlushNetDormancy called, because setting it on an actor
+    that is already asleep does not wake it.
+
+    Whether that is the cause is NOT established. It costs
+    one property write to rule out, and leaving it unset
+    means never knowing.
+
+  * The yellow hazard stripes are removed automatically on a
+    guest, rather than probed for.
+
+    The guest's screenshot settles what they are: the
+    counter's price signs are readable, the door mullions and
+    window frames are intact, the counter is the right blue,
+    and stripes are drawn OVER all of it. An actor drawing an
+    unconfigured default would show a WRONG appearance, not a
+    correct one with stripes on top - which kills the CDO
+    theory 1.5.7 shipped. UE5 draws exactly this with
+    UPrimitiveComponent::OverlayMaterial.
+
+    Clearing it is local, cosmetic and unsynchronised by
+    definition, so there is nothing to ask permission for.
+    Config.ClearBuildModeOverlay, and rt.stripes reports and
+    clears by hand.
+
+    IF THE COUNT COMES BACK ZERO the theory is wrong and the
+    log says so in those words. Read it and believe it.
+
+  * rt.stripes - what is overlaying the store, and clear.
+
+  * 112 checks in the smoke test, including: the host sends
+    to a guest and not itself, a guest reads what the host
+    sent, unrelated ClientMessage traffic is ignored, three
+    unreliable upstream packets collapse to one interaction,
+    a walk cycle plays when the player walks and switches
+    once rather than once per tick.
+
+
+CHANGES IN 1.5.9  -  the engine was putting it back,
+                     every frame, and three versions
+                     argued with it instead of it
+------------------------------------------------------
+  * THE FLOATING BODY. The actual cause, after three
+    versions of treating a symptom.
+
+    The offset was never failing to apply. 1.5.8's own log
+    proved that and nobody read it properly:
+
+      18:56:51  mesh offset Z-90 applied via
+                K2_SetRelativeLocation(v,false,{},false)
+      18:56:51  measured: the mesh origin sits -90 from the
+                pawn's origin (wanted -90)
+      18:57:00  rt.bodies -> feet offset: Z+0
+
+    Applied, verified, gone. Because a remote player is a
+    SIMULATED PROXY, and ACharacter network-smooths those.
+    UCharacterMovementComponent::SmoothClientPosition_-
+    UpdateVisuals() does this every frame:
+
+      NewRelTranslation = ...(MeshTranslationOffset +
+                              GetBaseTranslationOffset())
+      Mesh->SetRelativeLocationAndRotation(NewRelTranslation,
+                                           NewRelRotation)
+
+    BaseTranslationOffset is cached by ACharacter from
+    wherever the mesh sat at construction. Player_Character_C
+    has never had a body in it, so its mesh sits at the
+    origin, so the cache is (0,0,0) - which is exactly the
+    value the offset kept reverting to, on remote pawns only.
+
+    Every fix since 1.5.6 wrote the component. The engine
+    owns that component and rewrites it sixty times a second
+    from a number none of them touched.
+
+    So write the cache. BaseTranslationOffset and
+    BaseRotationOffset are both UPROPERTY() and take a direct
+    write; ACharacter::CacheInitialMeshOffset, the engine's
+    own front door for this, is plain C++ with no UFUNCTION
+    and cannot be called from here. Smoothing then produces
+    the offset we want on its own, every frame, and the body
+    interpolates like a real character instead of being
+    yanked back into place twice a second.
+
+    Fallback if the cache will not take: NetworkSmoothingMode
+    = Disabled, which stops the engine writing the transform
+    at all. Costs the interpolation - a remote player steps at
+    10 Hz instead of gliding - and that is a fair trade
+    against a body at head height.
+
+  * A NOTE ON HOW THIS WENT, because it is the most expensive
+    thing in this file.
+
+    1.5.6, 1.5.7 and 1.5.8 each shipped a different fix for
+    "the body floats". None of them was wrong about what it
+    changed. All three were wrong about what owned the value.
+    The measurement that settled it - apply, verify, re-read
+    nine seconds later - existed in 1.5.8 and pointed straight
+    at "something else writes this", and the next change was
+    STILL to write it again, harder, on a timer.
+
+    When a value you set goes back on its own, stop improving
+    the write. Find the writer.
+
+  * rt.bodies prints BaseTranslationOffset per remote player
+    and marks it when it is the thing flattening the offset.
+
+  * The smoke test now runs a smoothing frame. Setting the
+    component without the cache passes every other check in
+    that section and still floats in game, which is precisely
+    how this survived three releases.
+
+
+CHANGES IN 1.5.8  -  the body was never being moved at
+                     all, and the log agreed with the
+                     wrong side
+------------------------------------------------------
+  * YOU CAN SEE EACH OTHER. Confirmed from both machines
+    at once: a borrowed body renders on the host AND on the
+    guest, and it is recognisably one of the town's own NPCs.
+
+    That closes the oldest open question in the project. The
+    other player's Player_Character_C DOES replicate - the
+    two candidate causes in PROJECT.md 10 were never two, it
+    was only ever "no third-person mesh", and bodies.lua is
+    the answer to it.
+
+  * FIXED, and NOT for the reason this entry first gave.
+
+    The theory was that K2_SetRelativeLocation was being
+    refused over its FHitResult out-parameter and the failure
+    swallowed at DEBUG, so dress() logged the offset it had
+    INTENDED to apply. Five verified call shapes were added
+    on that basis.
+
+    The first live run disproved it. From the log:
+
+      18:56:51  mesh offset Z-90 applied via
+                K2_SetRelativeLocation(v,false,{},false)
+      18:56:51  measured: the mesh origin sits -90 from the
+                pawn's origin (wanted -90)
+      18:57:00  rt.bodies -> feet offset: Z+0   world rise +0
+
+    The original shape worked. It always worked. The offset
+    is applied, verified against a read-back, and then
+    REVERTED by something else within nine seconds - and
+    dress() runs once per pawn, so nothing has ever put it
+    back. Three versions of "the placement is wrong" were all
+    looking at the wrong end of it.
+
+    What reverts it is not established and is not guessed at
+    here. Two candidates sit in that window: the guest's pawn
+    is teleported next to the host about two seconds after it
+    arrives (spawn.lua, PROJECT.md 6), and a component that
+    was empty until a moment ago has an archetype whose
+    relative transform is zero - which is what a
+    re-registration would restore it TO.
+
+    holdPlacement() re-asserts the offset every poll. One
+    property read per remote player per two seconds, and it
+    is right whichever of those it turns out to be. log.lua
+    collapses the repeat if it fires constantly.
+
+    The verified call ladder is kept. It cost nothing, and it
+    is the thing that proved the setter innocent - the log
+    names which shape took.
+
+  * The log prints what was MEASURED - the mesh origin's real
+    offset from the pawn's - and says COULD NOT MOVE THE MESH,
+    loudly, when nothing takes. That is what caught the revert
+    above, nine seconds after the line that said it worked.
+
+  * FIXED: 1.5.7 ranked donors to spot a non-character mesh
+    and then copied its transform anyway.
+
+    The ranking was added precisely because an arbitrary level
+    mesh can have its origin anywhere, so its offset means
+    nothing on our capsule - and dress() went on preferring
+    donor.relLoc regardless of rank. The donor's numbers are
+    trusted only when the donor is a character now; otherwise
+    the engine convention is rebuilt from this pawn's own
+    capsule half-height.
+
+  * A donor is recognised as a character STRUCTURALLY - its
+    owner has a CapsuleComponent and its Mesh is this
+    component - instead of by matching DONOR_CLASSES.
+
+    That list is a guess about this game's naming. The store's
+    own staff, found by the fallback sweep, were being
+    described as "a skeletal mesh in the level" and ranked 1
+    instead of 3: their offsets distrusted for no reason, and
+    a donor below rank 3 re-searched on every poll forever.
+
+  * MEASURED, and it is why the above did not work first try:
+    UE.TryGet(comp, "Owner") returns nothing on this build.
+
+    Every donor the fallback sweep finds was therefore
+    reported as "a skeletal mesh in the level" at rank 1,
+    including SK_CHA_M_01, which is plainly one of the town's
+    own characters. The property is not readable here;
+    UActorComponent::GetOwner() is a UFUNCTION, is not one of
+    the names UE4SS's built-ins shadow (PROJECT.md 5), and
+    answers. Both the name path and the structural check go
+    through it now.
+
+  * The T-pose gets two more things it needs, neither of which
+    follows from the animation class being set. A component
+    that has never held a mesh has never needed to tick, and
+    can carry the right animation blueprint while rendering
+    the frame it was initialised with forever
+    (SetComponentTickEnabled). And UE5 only refreshes bones
+    for components the renderer thinks are visible, which is a
+    judgement about a component that was empty a moment ago
+    (VisibilityBasedAnimTickOption = AlwaysTickPoseAndRefresh-
+    Bones).
+
+    startAnimation now reports GetAnimInstance rather than
+    AnimClass. The class is what was asked for; the instance
+    is what the engine built. If the class sets and no
+    instance appears, say so - a borrowed animation blueprint
+    that casts its owner to the NPC class it was written for
+    gets a Player_Character_C, fails the cast, drives nothing,
+    and renders the reference pose. Which is a T-pose.
+
+  * rt.bodies prints, per remote player, the measured feet
+    offset and whether an AnimInstance is actually running.
+    Floating and T-posing are separate faults with separate
+    causes; one command tells them apart now.
+
+  * The smoke test refuses every K2_SetRelative* shape, which
+    is the worst case and the one the property fallback exists
+    for, and then asserts the feet ended at Z-88 and the yaw
+    at -90. A stub that accepts anything cannot tell a call
+    that worked from a call that did nothing, which is the
+    entire bug above.
+
+  * rt.localgm - build a GameMode on the guest. UNTESTED, and
+    a command rather than automatic for that reason.
+
+    A guest has no GameMode; AGameMode is server-only by
+    engine design and never replicates. That is why the guest
+    has no HUD, no clock and no money - measured, and visible
+    in a screenshot where the guest's world is at night while
+    the host's clock reads Sun 8:00 AM. The engine forbids
+    REPLICATING a GameMode. It does not forbid a client from
+    owning an ordinary actor of that class, and the class is
+    known on the client for free because AGameStateBase
+    replicates GameModeClass.
+
+    Nobody knows what this game's GameMode does in BeginPlay,
+    so this runs behind a crash breadcrumb and asks you to
+    report what changed on screen.
+
+
+CHANGES IN 1.5.7  -  the mod was probably causing the
+                     yellow boxes, and the Steam channel
+                     is a dead end
+------------------------------------------------------
+  * THE SIDE-CHANNEL CANNOT WORK ON THIS BUILD. Measured,
+    not inferred, and it is time to stop paying for it:
+
+      SteamID struct is 'SteamID' but exposes no readable
+      fields
+      a live SteamID answers to NONE of the field names
+      this mod knows
+
+    The probe reached the struct - it is called SteamID - and
+    it has ZERO reflected fields. That is not a name this mod
+    failed to guess. FSteamID wraps a uint64, and UE does not
+    support uint64 as a UPROPERTY, so the plugin stores it as
+    a plain C++ member with no reflection at all. A Lua table
+    can never construct one, and 22 shapes were refused
+    proving it.
+
+    Anything needing SendP2PPacket - state sync, chat,
+    interaction forwarding - needs a different transport.
+    Note what still works without it: everything you can see.
+
+  * SUSPECT FOUND for the yellow-and-black placeholder boxes,
+    and it is us.
+
+    From the guest's video: walls, shelves and the counter
+    render as striped boxes while everything the mod does NOT
+    touch - cobbles, planters, signs, doorways, NPCs, the
+    building shells - looks perfect. The striped objects are
+    precisely the classes in Config.ReplicatedClasses. That
+    is too close a match to be coincidence.
+
+    Mechanism: an actor derives Role and RemoteRole from its
+    class default object during PostInitializeComponents.
+    The mod was patching CDOs on the GUEST as well as the
+    host, which tells every level-placed actor of that class
+    that it is a network proxy waiting to be told what it
+    looks like, rather than something the level already fully
+    describes. So it never configures itself, and draws its
+    bare default - a yellow box.
+
+    Replication is an authority-side decision by definition;
+    a guest receives actors because the HOST chose to send
+    them. Patching now happens on the server only.
+
+    Config.PatchReplicationOnClients exists purely to put the
+    old behaviour back and confirm the stripes return. If
+    they do, this is settled.
+
+  * The borrowed body was still hovering. The offset fix in
+    1.5.6 was right but assumed the donor's mesh has its
+    origin at the feet, which is true of a character and not
+    of an arbitrary level mesh - and the donor in use was
+    "a skeletal mesh in the level". Donors are ranked now
+    (real character + animation beats animation alone beats
+    anything), and a body is re-dressed whenever a strictly
+    better donor appears, so opening the shop upgrades it.
+
+  * MEASURED, for whoever picks this up: the store's money
+    lives on Core_Gamemode_C as `Money`, an Int64Property, in
+    CENTS - 55000 is $550.00. Config.SyncedState had that one
+    right all along. There is no Day or Time property on the
+    GameMode under any name resembling those words.
+
+    And the thing that reframes the whole problem: the guest
+    HAS NO GAMEMODE AT ALL. rt.state on the guest prints
+    "GameMode: not available here". AGameMode is server-only
+    by engine design and never replicates. So the guest has
+    no HUD, no clock, no money, and none of the store
+    simulation - not because a value failed to sync, but
+    because the object that would hold it does not exist on
+    their machine. Mirroring numbers into it was never going
+    to work; there is nothing to mirror them into.
+
+
+CHANGES IN 1.5.6  -  the body stands on the floor now
+-----------------------------------------------------
+  * FIXED: the borrowed body floated at head height, faced
+    ninety degrees off, and stood in a T-pose.
+
+    All three are the same root cause. ACharacter's mesh
+    convention is "dropped to the bottom of the capsule and
+    yawed -90", and a mesh component that has never held a
+    mesh has never had its transform set either - so the body
+    was placed at the capsule's CENTRE (about 88 units up,
+    hence floating) with no yaw (hence sideways). The donor's
+    own transform was being copied, which is right when the
+    donor has one and useless when it does not. The engine's
+    convention is now the fallback, computed from the pawn's
+    actual capsule half-height.
+
+    The T-pose is a bind pose, which is what a skeletal mesh
+    renders with no animation instance running. Setting
+    AnimInstanceClass alone does not always start one - the
+    component's AnimationMode has to be AnimationBlueprint
+    first. Both are set, and the class is read back
+    afterwards, because "the call did not throw" has never
+    been the same as "it worked".
+
+  * A T-POSE IS NOW TEMPORARY. Donors are ranked: the whole
+    skeletal-mesh list is searched for one that has an
+    animation blueprint rather than taking the first match,
+    and a body that ended up static is re-dressed later when
+    a better donor appears. That matters because staff and
+    customers are spawned when the shop OPENS - so the donor
+    available at join time is very often the worst one that
+    will exist all session.
+
+  * The side-channel probe goes at the parameter directly.
+    Measured: a live FSteamID answers to NONE of the ten
+    field names this mod knows, and the struct type is not
+    findable by any obvious path - so guessing is exhausted.
+    SendP2PPacket carries the parameter, the parameter
+    carries the struct, and the struct carries its field
+    names; startup now walks exactly that chain and puts
+    whatever it finds at the FRONT of the shape list, so the
+    next send tries the build's own answer first.
+
+
+CHANGES IN 1.5.5  -  the diagnostic broke what it was
+                     diagnosing, and CONFIRMED: the player
+                     pawn has no body
+-------------------------------------------------------
+  * MEASURED AT LAST, with a reporting bug out of the way:
+
+      -- yours: Player_Character_C --
+         Mesh: SkeletalMeshComponent visible=true
+               ownerNoSee=false onlyOwnerSee=false
+         Mesh asset: <none>  <- nothing to draw
+
+    The player pawn has a skeletal mesh COMPONENT with no
+    mesh IN it. That is the first-person game explanation
+    holding up exactly as predicted, and it means bodies.lua
+    is aimed at a real target rather than a guessed one.
+
+  * FIXED, and it is embarrassing: the SteamID struct probe
+    added in 1.5.4 referenced a local declared 250 lines
+    BELOW it. A Lua local is only in scope after its
+    declaration, so the reference silently resolved to a nil
+    global and threw "attempt to index a nil value" on every
+    single discovery attempt.
+
+    Because that ran BEFORE api.ready was set, the Steam
+    channel could never come up at all - discovery retried
+    every three seconds forever, and each attempt killed the
+    whole tick. A diagnostic added to explain why the channel
+    was not working was, by itself, stopping the channel from
+    working.
+
+    Two fixes, and the second is the one that matters:
+    the declaration moved above its use, AND discovery now
+    marks itself ready BEFORE running any reporting, with the
+    reporting behind a guard. Nothing that merely DESCRIBES a
+    thing may sit in the path of that thing succeeding.
+
+  * The test harness grew Steam stubs, because their absence
+    is what let this through. With no Steam objects present
+    the smoke test bailed out of discovery early and never
+    executed the code that was throwing on two real machines.
+    A fake engine that is too empty tests nothing. Discovery
+    is now asserted end to end, including that no error
+    escapes it.
+
+  * Borrowed bodies look harder for a donor. Measured with
+    the shop closed: "NPC classes present in this level: none
+    found right now" - staff and customers are spawned when
+    the shop opens, so on the quiet screen where somebody is
+    most likely to be testing, there was nothing to borrow
+    and the feature looked broken rather than waiting. It now
+    falls back to any skeletal mesh component in the level
+    that has a mesh in it, then to any loaded skeletal mesh
+    asset at all (bind pose, no animation - but visible).
+
+
+CHANGES IN 1.5.4  -  1.5.1 was wrong about SafeMode, and
+                     the log paid for it
+--------------------------------------------------------
+  * SAFE MODE IS BACK ON. 1.5.1 turned it off on a theory,
+    and the theory was measured and was wrong.
+
+    The theory: StaticConstructObject was being called as
+    (cls, pawn, name, 0, 0, nil, false, false, nil) against
+    UE4SS's (Class, Outer, Name, SetFlags, InternalSetFlags,
+    bCopyTransientsFromClassDefaults, bAssumeTemplateIsArchetype,
+    InTemplate, ...) - a nil where a bool goes and a `false`
+    where a UObject* goes. That is a good guess and it looks
+    exactly like a crash in StaticConstructObject_Internal.
+
+    It was not it. With the three-argument form - which
+    cannot have the wrong types in it, there being nothing
+    after Name to get wrong - the component still comes back
+    unusable: it passes UObject::IsValid and then
+    RegisterComponent reports the instance is nullptr.
+    Measured on BOTH machines. So the fault is in
+    constructing the component at all, and remains unsolved.
+
+    Cost of getting this wrong: 1,275 errors on one machine
+    and over 15,000 on the other in a single session.
+
+  * A FAILURE CAN NO LONGER COST YOU AN 18 MB LOG. That is
+    what the above produced, and the logging hurt more than
+    the bug did - every line flushed to disk, on the thread
+    the game is waiting for.
+
+    Safety.guard only ever handled CRASHES: a crash leaves a
+    breadcrumb and gets retired, but a Lua ERROR was caught,
+    logged, and retried on the very next tick forever. It now
+    gives up on an operation after 3 failures in a row and
+    says so once. Failing safely, failing quietly and failing
+    repeatedly are three different things and only the first
+    was covered.
+
+    Belt and braces: the logger collapses identical
+    consecutive messages and reports the count instead, and
+    rotates the file if it passes 4 MB.
+
+  * FIXED: rt.why called the local player's own pawn "OTHER
+    PLAYER", next to the real one. UE4SS returns a fresh Lua
+    wrapper for every lookup, so `p == UE.GetPawn()` is false
+    for the pawn it just got FROM GetPawn. Comparison is by
+    full name now (UE.sameObject).
+
+    Not cosmetic: bodies.lua used the same test, so it would
+    have put a borrowed body inside your own camera.
+
+  * FIXED: rt.why read SkeletalMesh, which UE5.1 renamed to
+    SkeletalMeshAsset and left as a deprecated alias that
+    reads back as an unusable object. So it printed
+    "UObject: 0000027E42A25628" and looked like a mesh was
+    present - while the question being asked was precisely
+    whether one was. It reads the new name first and says
+    "<none>" plainly.
+
+  * The side-channel still cannot send, and now says less and
+    knows more. Measured: SendP2PPacket takes
+    (StructProperty SteamIDRemote, ...) and refused all four
+    shapes 1.5.1 tried. So the struct is real and neither
+    guessed field name is right.
+
+    Rather than guess a fifth time, startup now DUMPS THE
+    STRUCT'S REAL FIELD NAMES - by looking the type up by
+    path, or failing that by probing a live SteamID returned
+    by GetSteamID. Whatever that prints is the answer.
+    Meanwhile the shape list is generated from every field
+    name the mod knows, crossed with int64 AND string: a
+    plugin storing a SteamID64 as text is entirely reasonable
+    (it does not fit in a double) and was never once tried.
+
+
+CHANGES IN 1.5.3  -  you can see each other
+-------------------------------------------
+  * NEW: other players get a visible body, borrowed from the
+    store's own staff.
+
+    Retro Rewind is first person. Player_Character_C derives
+    from ACharacter, so it ALREADY HAS a mesh component -
+    every ACharacter does, inherited from the C++ base - but
+    a game nobody ever sees themselves in had no reason to
+    put a body in it. So two players stand next to each
+    other, replicating perfectly, and see nothing at all,
+    while whatever they are carrying floats in mid-air:
+    a pickup is an ordinary actor and replicates like one.
+
+    The staff and customers walking around are skeletal
+    meshes that are already loaded, already cooked and
+    already the right scale for this world, so one gets
+    borrowed - mesh, animation blueprint, and the placement
+    of the mesh against its own capsule.
+
+    ENTIRELY LOCAL, and that is what makes it cheap. Nothing
+    here replicates and nothing needs to: each machine
+    decorates the pawns it can see and skips its own. A guest
+    fixes their own view of the host without the host doing
+    anything. The authority problem that makes guest
+    interactions hard does not apply at all.
+
+    It also cannot mislead you. If the other player's pawn is
+    not replicating there is no actor here to put a mesh on -
+    a different bug with an identical symptom - so it counts
+    what it can actually see and says which of the two it is
+    looking at, rather than doing nothing quietly.
+
+      rt.bodies        what is here, what is missing, and
+                       what there is to borrow from
+      rt.bodies retry  try again now
+
+    Runs behind a crash breadcrumb, because touching render
+    components on live pawns is exactly the class of thing
+    that has taken this game down before. If it crashes, the
+    next launch turns it off and co-op carries on without it.
+
+  * Config.BorrowNpcBodies (absent means on). Turn it off if
+    you would rather see nothing than see your friend as a
+    shop assistant.
+
+
+CHANGES IN 1.5.2  -  guest actions never left the guest
+-------------------------------------------------------
+  * THE BUG: Sync.requestInteract had ZERO CALLERS. Written,
+    documented, switched on by default in
+    Config.ForwardGuestInteractions, and never once invoked -
+    the same shape of bug as Net.addPeer in 1.5.0, and with
+    the same effect. It read as implemented and had never
+    run.
+
+    This is why the host can see a guest's screen fine but a
+    guest picking something up does nothing on the host. That
+    half is NOT a replication bug and turning more replication
+    on will never fix it: in Unreal only the server has
+    authority. The host's actions replicate down to everyone
+    automatically; a guest pressing "use" runs the Blueprint
+    on their machine alone and the server is never told. The
+    game's Blueprints have no server RPCs and none can be
+    added to a cooked build, so the only route is the one that
+    was already written and never wired up - forward the
+    guest's INTENT over the mod's own Steam channel and have
+    the host re-run the trace with authority.
+
+    Now bound to a key (Config.GuestInteractKey, default E).
+    Not a hook on the game's own interact function, because
+    nobody knows what that function is called yet - which is
+    what rt.funcs below is for.
+
+  * NEW: rt.funcs <what> [filter]. Properties tell you what an
+    object IS; functions tell you what can be DONE to it, and
+    that half was missing. The host's replay calls an
+    interaction function on whatever its trace hit, and the
+    name of that function has only ever been guessed at from
+    a list of five plausible spellings. If none is right the
+    call is skipped and forwarding silently does nothing.
+    A cooked Blueprint carries its full function table, so
+    read it off the running game:
+
+      rt.funcs Shelve_C interact
+      rt.funcs pawn
+
+    When the replay cannot find a function it now says so in
+    a full diagnostic block naming the class it hit and the
+    exact command to run, instead of one warn line.
+
+  * rt.state searches for MODE and PHASE variables too, and
+    covers the player controller and pawn as well as the three
+    globals. Prompted by a guest's screenshot: the whole store
+    rendered in yellow-and-black hazard stripes, with a
+    placement footprint on the floor - but with every mesh and
+    texture CORRECT underneath. That is not per-prop appearance
+    data, which is what the "yellow boxes" problem was assumed
+    to be for two versions. It is a build/placement MODE the
+    guest's client is in and the host's is not, and none of
+    the old search terms (money, day, season, time) would ever
+    have found it. Possibly a single bool.
+
+  * Config.GuestInteractKey is absent-means-default, so an
+    older config.lua carried across an upgrade still gets the
+    fix rather than quietly leaving it off.
+
+
+CHANGES IN 1.5.1  -  the side-channel STILL had not run,
+                     the spawn ladder crashed the game, and
+                     SafeMode was guarding the wrong thing
+--------------------------------------------------------
+  * SAFE MODE IS NOW OFF BY DEFAULT, because the crash it
+    was turned on for in 1.1.2 has been found and it was
+    never what it looked like. The conclusion recorded at
+    the time - "creating a TextRenderComponent on a live
+    pawn crashes this build" - blamed the feature. The bug
+    was the call:
+
+      StaticConstructObject(cls, pawn, name, 0, 0, nil,
+                            false, false, nil)
+
+    UE4SS's order is (Class, Outer, Name, SetFlags,
+    InternalSetFlags, bCopyTransientsFromClassDefaults,
+    bAssumeTemplateIsArchetype, InTemplate, ...). Count
+    along: a nil went where a bool belongs, and a `false`
+    went where a UObject* template belongs. Handing a
+    boolean to a pointer parameter is exactly how you go
+    bang inside StaticConstructObject_Internal.
+
+    Every parameter after Name is optional, so it now uses
+    the three-argument form - correct, and the smallest
+    surface left to get wrong. Nametags and the on-screen
+    overlay are back on. Set SafeMode = true if you want
+    them off; you lose nothing that makes co-op work.
+
+  * A CRASH CAN NOW ONLY HAPPEN ONCE. A native crash cannot
+    be caught - pcall traps Lua errors, not memory faults -
+    but it can be noticed afterwards. Anything in this mod
+    that has ever taken the game down now writes a note
+    saying what it is about to do, and deletes it on the way
+    out. A note still sitting there at the next launch means
+    the last run died inside that operation, so it is
+    switched off permanently and you are told which one and
+    why.
+
+    This is the difference between a player relaunching into
+    the identical crash forever and a game that comes up
+    working with one cosmetic feature disabled. Covers the
+    overlay, nametags, the PLAY CO-OP menu button and each
+    rung of the spawn ladder.
+
+      rt.safety        what got switched off, and why
+      rt.safety reset  try them again (after an update, say)
+
+  * config.lua IS CHECKED AT STARTUP. Nearly every way of
+    getting it wrong used to fail silently, and all of them
+    look identical to "the mod does not work":
+
+      - PeerSteamIds written as "7656..." instead of
+        { "7656..." } - the loop then iterates nothing
+      - a SteamID with a stray space, which never matches
+      - your OWN id in PeerSteamIds instead of your friend's
+      - a Steam ID in JoinTarget, which cannot work here
+      - a mistyped key name, which binds nothing
+      - Port set to anything but 27015
+      - LogLevel, StateSyncHz, MaxPlayers out of range
+
+    Everything fixable is repaired in memory and reported;
+    nothing is written to your file. rt.config shows it
+    again at any time.
+
+  * NEW: rt.config, rt.safety. rt.status and rt.diag show
+    the mod version, and the version now travels in the
+    hello packet - so two people on different builds are
+    told, instead of finding out through an hour of features
+    that work in one direction only.
+
+  * The installer verified a hand-typed list of script files
+    that had drifted: it never checked spawn.lua or
+    inspect.lua, so an install that silently dropped the
+    file responsible for giving guests a body would have
+    reported itself complete. It now checks against what is
+    actually in the source folder.
+
+  * DEV: Check-Mod.py parses every script AND runs the whole
+    mod against a fake UE4SS in test/ - all 15 modules load,
+    main.lua boots, the tick loop runs, every rt.* command is
+    invoked, and the two situations that have actually broken
+    this project are replayed as assertions. There is no Lua
+    binary on the dev machine, so this used to be a game
+    launch per typo.
+
+    It has already earned itself: it caught that UE4SS's
+    built-in UObject members SHADOW reflected UFunctions of
+    the same name, which meant a liveness check written as
+    ksl:IsValid(obj) was calling UE4SS's built-in on ksl,
+    ignoring the argument, and answering "yes" forever - a
+    no-op wearing the costume of a safety check.
+
+
+  * THE CRASH, and where 1.5.0 left off. The log ends like
+    this:
+
+      01:05:04  guest has no pawn - giving the game's own
+                login path 4s
+      01:05:08  players: ...remote... pawn: NONE
+                Player_Character_C in world: 1 possessed,
+                                             1 unpossessed
+      01:05:08  attempt 1/5: HandleStartingNewPlayer
+      01:05:20  ===== session start =====
+
+    Twelve seconds from the ladder's first rung to a fresh
+    process, with no error logged by anybody - which is the
+    signature of a native access violation, not a Lua fault.
+
+    What that guest actually was: somebody LEAVING. Their
+    character was still standing in the store unpossessed,
+    which is what an unpossess on disconnect looks like. A
+    departing player's PlayerController does not vanish on
+    the frame they go; the engine drops their UNetConnection,
+    flags the actor as garbage, and FindAllOf keeps handing
+    it back for a while afterwards. Through that window it is
+    indistinguishable from a guest who needs a body - no
+    pawn, because theirs was just taken away - so the ladder
+    picked it up and called a GameMode login function with a
+    controller that was being freed underneath it.
+
+    The ladder now refuses to touch a controller that is not
+    a live guest: not garbage, not being destroyed, and still
+    holding the UNetConnection that proves somebody is on the
+    other end. Same test the bundled SplitScreenMod uses.
+
+    Deliberately fails OPEN. Every liveness check only ever
+    reports death on a positive signal, and the Kismet one is
+    calibrated at runtime against an object known to be
+    alive. A missed teardown costs a rare crash; a false
+    negative would switch the ladder off for everyone and put
+    every guest back on a black screen permanently. Those are
+    not the same mistake.
+
+  * THE SIDE-CHANNEL STILL SENT NOTHING. 1.5.0 correctly
+    found that Net.addPeer had no callers, so the peer list
+    was always empty. That was real, and it was not the whole
+    story. Measured on the next run - host with the friend's
+    ID in Config.PeerSteamIds, guest connected for five
+    minutes - the log contains no "hello", no "accepted P2P
+    session", no peer registered. Not one packet, again.
+
+    Everything in this mod carries SteamIDs as strings, and
+    it must: a SteamID64 is past the 2^53 a double holds
+    exactly, so putting one through a float silently loses
+    digits. But SteamCore Pro's SendP2PPacket wants an
+    FSteamID struct, and the string threw - inside a pcall
+    whose only report was a DEBUG line. At the default log
+    level every send failed in complete silence, and
+    rt.status cheerfully said "P2P side-channel: connected"
+    the whole time.
+
+    Sending now tries int64, FSteamID{Value}, FSteamID{SteamID}
+    and the string, keeps whichever the plugin accepts, and
+    says which one that was. A shape SendP2PPacket confirms
+    beats one that merely does not complain. If all four
+    fail it now says so LOUDLY instead of never mentioning
+    it. AcceptP2PSessionWithUser had the identical bug.
+
+    The plugin's real signatures are logged at info now, not
+    debug. They are the single piece of information that
+    decides whether this channel can work, and asking someone
+    to reproduce "nothing happens" with debug logging on is
+    not a reasonable support step.
+
+  * FIXED: a guest could never send chat or forward an
+    interaction. Both address the host by SteamID, read from
+    Net.state.hostSteamId - which was only ever set when the
+    join TARGET was itself a Steam ID. Joining by Steam ID
+    does not work on this build, so the only route that does
+    work, joining by IP, never set it, and Chat.say took its
+    "no host known" branch every single time. On a client the
+    only peer that can exist is the host, so it is inferred
+    from the first peer heard from.
+
+  * FIXED: player names printed as "FString: 000001305A8CD158".
+    PlayerNamePrivate is an FString and arrives as userdata
+    on this build, so tostring() gave its address. That went
+    into the pawn diagnosis where the name should be, into
+    rt.players, into nametag labels, and stamped every chat
+    message with it as the sender. Net driver names had the
+    same problem as FNames - including inside the driver
+    lookup fallback, where a comparison against "Game" could
+    never match, quietly making that whole path a no-op.
+
+  * FIXED: nobody was told when a player left. The engine's
+    Logout is a plain C++ virtual with no reflection data and
+    the K2_ variant does not fire here, so the only detector
+    is the roster poll - which announced departures to the
+    overlay, and SafeMode (the default) disables the overlay.
+    A player leaving therefore produced no record anywhere,
+    which is a large part of why the crash above was hard to
+    read. It goes to the log now.
+
+  * rt.status counts side-channel traffic - sent, failed,
+    received - and says plainly when nothing has ever crossed
+    it. "The API is bound" and "a byte has moved" are
+    different claims and only the second one matters.
+
+  * rt.pawns flags a controller that is on its way out, so a
+    guest who is leaving is never again mistaken for a guest
+    who is stuck. bDelayedStart no longer reports itself as
+    "UObject: 000001305A930268" - it lives on AGameMode and
+    this game derives from AGameModeBase, so it is genuinely
+    absent, and saying so is more useful than printing an
+    address.
+
+
+CHANGES IN 1.5.0  -  the side-channel had never once run
+--------------------------------------------------------
+  * THE BUG: Net.addPeer had ZERO callers. Nothing anywhere
+    ever registered a peer, so Net.peerCount() was always 0,
+    so Sync.tickHost returned on its first line and every
+    broadcast went to an empty list. State sync and chat have
+    never sent a single packet in the life of this mod. The
+    property names in Config.SyncedState were never even
+    reached, so whether they are correct is STILL unknown -
+    a second bug that was hiding behind the first.
+
+  * Peer registration now happens two ways: any well-formed
+    packet registers its sender, and Config.PeerSteamIds
+    seeds the first contact (needed because you join by IP,
+    and an IP never reveals a SteamID64). Both players add
+    the other's ID once; after first contact the hello/ack
+    exchange makes discovery automatic.
+
+  * NEW: rt.state, rt.props <what>, rt.why - a runtime
+    inspector. Three separate problems (state not syncing,
+    props rendering as yellow boxes, players not seeing each
+    other) were all being attacked by guessing at property
+    names. A cooked Blueprint class carries its full property
+    table, so the game will just tell us. Run the same
+    command on both machines and compare: a value that reads
+    4200 on one and 0 on the other is exactly what needs
+    mirroring, and you can SEE it rather than infer it.
+
+  * Confirmed by measurement this build: the guest spawned at
+    Z=-408 against the host's Z=96 - 544 units below the
+    floor. So "under the map" was literal, and the 1.4.1
+    placement fix moved them: (2367, 177, -408) ->
+    (2037, -614, 136).
+
+
+CHANGES IN 1.4.1  -  measured: the ladder was not needed
+--------------------------------------------------------
+  * The first live two-machine test settled what 1.4.0 could
+    only guess at. The engine's login path WORKS on this
+    build: Core_Gamemode_C's DefaultPawnClass really is
+    Player_Character_C, and L_Player_Store_01 really does
+    contain a PlayerStart. The guest arrives with a proper
+    character and none of the five spawn routes ever runs.
+
+    So the black screen was never a missing pawn class. It
+    was WHERE the pawn ends up. There is exactly one
+    PlayerStart in a game that has never used one - Retro
+    Rewind puts you in your shop from your save file, not
+    from a spawn marker, so nothing has ever had to be
+    correct about where that marker sits. The guest reported
+    spawning "under the map".
+
+    The ladder stays. It cost nothing to keep, it is what
+    proved the login path healthy, and a future game patch
+    that moves DefaultPawnClass would need it.
+
+  * Guests are now moved next to the host ~1.5s after they
+    arrive, and their view target is set explicitly. Those
+    are two separate causes with one symptom: a pawn under
+    the floor, and a camera with no view target rendering
+    from the world origin - which in a store built away from
+    the origin also looks exactly like being under the map.
+
+  * A guest who keeps ending up far below the host is pulled
+    back up to four times, then the mod stops and says
+    plainly that this is not a bad spawn point but floor
+    that does not exist on their machine.
+
+  * rt.pawns now prints WORLD COORDINATES for every pawn and
+    every PlayerStart, and flags anyone below the host. "Has
+    a pawn" and "is somewhere you can see the shop from" are
+    different questions and only the numbers separate them.
+
+  * NEW: rt.bring - host pulls everyone to where they are
+    standing. The manual version of the above.
+
+  * New options: Config.PlaceGuestsNextToHost,
+    Config.RescueFallingGuests (both default on, both
+    absent-means-on).
+
+
+CHANGES IN 1.4.0  -  why the guest saw only black
+-------------------------------------------------
+  * THE BUG: the guest connected and then got no body.
+    1.3.0 fixed joining, and joining now works - the host's
+    log shows "a player joined (2 connected)" - but the guest
+    sat at a black screen. They had no pawn. A
+    PlayerController with no pawn has no view target either,
+    so the camera renders from the world origin, which in
+    this store is inside solid geometry. Hence black, with
+    nothing logged anywhere, on either machine.
+
+    The cause is that this game's GameMode has never in its
+    life had a second player log in. The engine's login path
+    is PostLogin -> HandleStartingNewPlayer -> RestartPlayer
+    -> SpawnDefaultPawnFor(FindPlayerStart), and a
+    single-player GameMode only has to satisfy the parts its
+    own startup uses. Any one of these breaks it and they all
+    look identical from outside: DefaultPawnClass not set to
+    the store character (the game builds and possesses
+    Player_Character_C from its own Blueprint, for player 0
+    only), no APlayerStart in the level, a Blueprint override
+    that never calls RestartPlayer, or bStartPlayersAsSpectators
+    / bDelayedStart suppressing the restart by design.
+
+    Rather than guess which, the host now watches for a
+    connected controller with no pawn, gives the game's own
+    login path first refusal, and then escalates through five
+    increasingly blunt routes until the player is driving
+    something - logging which rung worked, so the log says
+    what this build actually needed:
+
+      1. HandleStartingNewPlayer  (the game's own path)
+      2. SpawnDefaultPawnFor at a PlayerStart, or failing
+         that at wherever the host is standing
+      3. the same, with DefaultPawnClass temporarily pointed
+         at the store's character and then put straight back
+      4. building Player_Character_C directly
+      5. adopting a character nobody is driving
+
+    Possession is followed by SetViewTargetWithBlend, which
+    replicates to the owning client - possession alone does
+    not end the black screen, because the camera follows the
+    view target and a controller that was never restarted has
+    none.
+
+  * ONLY THE HOST NEEDS THIS UPDATE. Spawning and possession
+    are authority-only; a guest cannot fix this for
+    themselves. The guest side of the new code only notices
+    and explains, so that somebody staring at black is told
+    why instead of guessing.
+
+  * NEW: rt.pawns    - who has a character and who does not,
+                       plus the GameMode's DefaultPawnClass
+                       and the level's PlayerStart count.
+         rt.fixpawns - host: run the whole ladder again now.
+
+  * FIXED, found on the way: on a listen server the host's
+    own "which controller is mine" lookup could return the
+    GUEST's controller. It picked the first controller with a
+    Player set, and UNetConnection derives from UPlayer, so a
+    remote controller has one too. The host could therefore
+    read the guest's pawn, camera and name as their own. It
+    now asks IsLocalController() first.
+
+  * New option: Config.AutoSpawnGuestPawns (default on).
+    Deliberately not guarded by a ConfigVersion bump - a
+    missing value counts as on, so an older config.lua
+    carried across a reinstall still gets the fix instead of
+    quietly restoring the black screen.
+
+
+CHANGES IN 1.3.0  -  why nobody could ever join
+-----------------------------------------------
+  * THE BUG: the guest's travel call could never run.
+    Joining used APlayerController::ClientTravel, which is
+    NOT reflected - only ClientTravelInternal carries
+    UFUNCTION data - so it threw on every attempt. It then
+    fell back to the "open <addr>" console command, which
+    Shipping builds compile out. The fatal part: dispatching
+    that command does not fail, so the mod saw success, told
+    the player "Connecting to ...", and did nothing at all.
+    The guest's log shows four joins reported as successful
+    with not one packet sent.
+
+    Joining now uses GameplayStatics.OpenLevel - the same
+    call already proven to travel the host into a listen
+    server on this build - then ClientTravelInternal, then
+    the console as an explicitly distrusted last resort. A
+    watchdog checks 15 seconds later that the game really
+    became a client, so a silent no-op can never again be
+    reported as a successful join.
+
+  * PORT: unchanged at 27015, and a 1.2.x-era change to 7777
+    has been reverted. That change was made on the theory
+    that the host bound Unreal's documented default of 7777
+    because this game wipes its user Engine.ini. Measuring
+    the running process showed the listen server on 27015:
+    the port comes from the PACKAGED DefaultEngine.ini
+    inside the pak, which nothing wipes, and "?Port=" on a
+    travel URL does not override it (FURL takes the port
+    from host:port, not from an option). The original 27015
+    was correct all along; the port was never the problem.
+
+    Lesson applied: CHECK CONNECTION reads the real socket,
+    and that is now the authority over any reasoning about
+    what the port "should" be.
+
+  * Steam ID joining is now refused with an explanation
+    instead of half-attempted. It cannot work here: the
+    engine builds SteamCoreSocketsNetDriver, calls
+    IsAvailable() on it, gets false, and silently swaps in
+    DriverClassNameFallback - IpNetDriver. The old log line
+    "net driver set to SteamCoreSockets (relay)" was printed
+    before any of that happened, so it read as success while
+    the very next line said IpNetDriver. Transport now
+    defaults to "ip", and the installer no longer flips it
+    back to "steam" on every reinstall.
+
+  * Joining from the main menu now says why it did nothing.
+    Both travel routes need a PlayerController and there is
+    none until a level is loaded, so F5 at the menu was a
+    silent no-op - the exact thing the guest was told to do.
+    You must load your own save first; it now tells you so.
+
+  * FIXED the random fatal error (access violation). The
+    replication sweep re-scanned every configured class every
+    4 seconds forever, calling GetLocalRole()/SetReplicates()
+    on whatever FindAllOf returned. The store spawns and
+    despawns AI customers constantly, so eventually one was
+    mid-destruction when the sweep reached it, and touching a
+    half-freed UObject is an access violation in native code
+    - which pcall cannot catch, because it traps Lua errors,
+    not memory faults. That matches the crash dumps exactly:
+    EXCEPTION_ACCESS_VIOLATION with a callstack entirely
+    inside UE4SS. Once a class's default object is patched
+    every future spawn replicates by itself, so the sweep now
+    does one instance pass per class and then leaves that
+    class alone forever. Also removes a full object-array
+    scan from the 4-second timer.
+
+  * NEW: Config.JoinOnLoad - load a save, land in your
+    friend's store. The guest sets JoinTarget + JoinOnLoad
+    once and then just presses Continue like normal; a few
+    seconds after their own store finishes loading they are
+    travelled to the host. This is the guest's real entry
+    point, because it satisfies by construction the thing
+    that was breaking every other route: travel needs a
+    PlayerController, and one only exists once a level has
+    loaded. Save files are not read or written to do this -
+    turning the option off restores normal loading exactly.
+
+  * NEW: "CHECK CONNECTION - Double click me.bat". Run it
+    while hosting. It reads the UDP socket the game process
+    actually has open, so it tells you the real port and the
+    real address rather than what a config file claims.
+
+
+CHANGES IN 1.2.1  -  a way for the guest to actually join
+---------------------------------------------------------
+  * F5 = JOIN. The guest had no usable way in: the rt.* commands
+    live in the in-game console, and the main-menu button crashes
+    this build so it is disabled. A keybind needs no UI and no
+    typing, and keybinds already work reliably here.
+
+    F5 tries, in order:
+      1. a Steam invite we were handed
+      2. Config.JoinTarget from config.lua  <- the reliable one
+      3. any friend currently hosting
+
+  * Config.JoinTarget - paste your friend's Steam ID or IP into
+    config.lua once, then F5 joins them forever after. This is the
+    path that does not depend on Steam presence working.
+
+  * Config.AutoJoinFriend (off by default) - walk straight into a
+    hosting friend's store on launch with no keypress at all.
+
+  * If F5 has nothing to join it now prints exactly what to do and
+    where config.lua lives, instead of doing nothing.
+
+CHANGES IN 1.2.0  -  the real cause of the transport failure
+------------------------------------------------------------
+  * ROOT CAUSE FOUND: this game does not keep a user Engine.ini.
+    The file is deleted on launch - only GameUserSettings.ini
+    survives. Every net-driver setting written there was silently
+    thrown away, which is why hosting ALWAYS came up on IpNetDriver
+    however the config was written, and why guests joining by Steam
+    ID got bounced to the main menu with no error anywhere.
+
+  * The transport is now selected in memory instead of in a file.
+    UEngine::NetDriverDefinitions is an ordinary property array and
+    CreateNamedNetDriver re-reads it every time a driver is made, so
+    the GameNetDriver entry is rewritten immediately before travel.
+    Nothing can wipe it.
+
+  * Joining picks the driver from the address: a steam.<id> target
+    selects the Steam relay driver, an IP selects the IP driver.
+
+  * Bandwidth limits are raised on the live driver after creation
+    (the config that used to do this did not survive either).
+
+  * Added Enable-DirectHosting: opens Windows Firewall for UDP 27015,
+    asks the router to forward it over UPnP, and prints the address
+    to give your friend. For playing over the internet with no VPN.
+
+CHANGES IN 1.1.3
+----------------
+  * FIXED: crash with SafeMode on. The mod queued newly spawned pawns and
+    patched them a frame later; this game despawns AI customers constantly,
+    so some of those objects were already freed by then. Touching a freed
+    UObject through UE4SS is an access violation (0x0a) - which is exactly
+    what the crash dump showed, with a callstack entirely inside UE4SS.
+    The mod now holds NO actor pointers across frames at all. Replication
+    is driven purely by class-default-object patching plus a periodic
+    sweep, which was always doing the real work anyway.
+
+  * FIXED: guest clicked "Join Game" and landed at the main menu with
+    nothing logged. Steam only puts "+connect" on the command line when it
+    LAUNCHES the game for a join. If the client is already running it
+    updates GetLaunchCommandLine instead - and the mod only read that once
+    at startup, so it never saw the request. It is now polled every 2s.
+
+  * Steam relay was silently not active: the listen server came up on
+    IpNetDriver, and a steam.<id> URL means nothing to it, so guests were
+    bounced. Added bUseSteamNetworking=True, and the mod now says so
+    loudly at host time instead of failing silently - including whether
+    the Steam driver class is even loadable in this build.
+
+CHANGES IN 1.1.2
+----------------
+  * SafeMode is now ON by default, confirmed by live testing: pressing
+    F7 to host crashed the game, and turning SafeMode on fixed it and
+    allowed a successful invite. The fault is in the runtime-created
+    render components (floating nametags and the on-screen overlay),
+    not in the networking.
+    Everything that makes co-op work is unaffected. Chat and status
+    print to the UE4SS console instead of on screen.
+    Both players should be on this version - no manual config edit
+    needed any more.
+
+
+CHANGES IN 1.1.1
+----------------
+  * FIXED: crash at the boot menu. The "PLAY CO-OP" main-menu entry
+    constructs a UMG widget at runtime and parents it into the live
+    menu; on this build that took the game down the moment the menu
+    appeared. It is now OFF by default (Config.ShowMainMenuButton).
+    You lose nothing: Steam's "Join Game", rt.friends and rt.join all
+    do the same job without touching the game's UI.
+    If you do enable it, it now refuses to add itself to a container
+    that cannot take extra children, and logs every step so a failure
+    names the exact call.
+  * Join/leave handling no longer fires in single player.
+
+
+CHANGES IN 1.1.0  (fixes from the first live test)
+--------------------------------------------------
+
+CRASHES / PERFORMANCE
+  * Removed a hook on /Script/Engine.Actor that fired a Lua callback for
+    every actor the game ever constructed - thousands, continuously.
+    Only pawns are watched now.
+  * Stopped touching actors from inside construction callbacks. Calling
+    SetReplicates on a half-built actor reaches into the world's network
+    list mid-construction; that was the fatal error. New actors are now
+    queued and handled a tick later.
+  * The mod is completely inert in single player. It does no work at all
+    until a net driver exists.
+  * The 5-second sweep no longer does 52 full object-array scans at once;
+    it walks 4 classes at a time, round-robin, and skips actors it has
+    already handled.
+  * Hot lookups (player controller, world, net driver, game mode) are
+    resolved once per tick instead of several times each.
+  * bAlwaysRelevant now defaults OFF. Having it on made the server send
+    every prop in the store to every client on every update.
+
+CORRECTNESS
+  * Hosting no longer silently did nothing: the mod was asking
+    UKismetSystemLibrary for GetNetMode, which does not exist there, so it
+    always believed it was in single player. Net mode is now read from the
+    world's net driver.
+  * Steam ID was being read as a struct and stringified to
+    "table: 0x...". It is now extracted properly, with Steam's own
+    loginusers.vdf as an exact fallback.
+  * Steam IDs are no longer rounded. Formatting a 17-digit ID as a float
+    lost the last two digits, so every join would have failed.
+  * PostLogin/Logout hooks were silently unavailable (they are plain C++
+    virtuals with no reflection data). Now uses the K2_ variants, plus
+    polling that always works.
+  * Hosting and joining use GameplayStatics.OpenLevel and
+    PlayerController.ClientTravel instead of console commands.
+  * The main-menu button now anchors on the menu's own buttons instead of
+    a guessed widget class name, and rt.menu reports what it found.
+  * A failed host attempt now says so loudly instead of appearing to work.
+
+NEW
+  * Config.SafeMode - disables everything that creates render components
+    (nametags, overlay) while keeping co-op. Try it first if anything
+    misbehaves.
+  * rt.menu - diagnoses main-menu button injection.

@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>RewindTogetherLauncher</AssemblyName>
+    <RootNamespace>RewindTogether.Launcher</RootNamespace>
+    <!-- steam_api64.dll (loaded from the game at runtime) is 64-bit, so we must be too. -->
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\icon.ico</ApplicationIcon>
+    <StartupObject>RewindTogether.Launcher.Program</StartupObject>
+    <Version>1.0.0</Version>
+    <Product>Rewind Together Launcher</Product>
+    <Company>Rewind Together</Company>
+    <Description>One-click launcher, installer and co-op session manager for the Rewind Together mod for Retro Rewind.</Description>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <!-- App.xaml is a plain resource page: Program.Main owns startup so that the same exe can
+       also run headless as the Steam agent (see Steam\SteamAgent.cs) without creating a window. -->
+  <ItemGroup>
+    <ApplicationDefinition Remove="App.xaml" />
+    <Page Include="App.xaml" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\catalog.json" LogicalName="RewindTogether.Launcher.catalog.json" />
+    <Resource Include="Assets\icon.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="RewindTogether.Launcher.Tests" />
+  </ItemGroup>
+
+</Project>

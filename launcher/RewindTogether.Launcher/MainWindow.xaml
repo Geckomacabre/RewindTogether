@@ -1,0 +1,164 @@
+<Window x:Class="RewindTogether.Launcher.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="clr-namespace:RewindTogether.Launcher.UI"
+        Title="Rewind Together" Width="1240" Height="790" MinWidth="1040" MinHeight="700"
+        WindowStartupLocation="CenterScreen" Background="{StaticResource Bg0Brush}"
+        Icon="pack://application:,,,/Assets/icon.ico"
+        UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"
+        FontFamily="{StaticResource BodyFont}" FontSize="14" Foreground="{StaticResource TextBrush}">
+    <Grid>
+        <!-- ============================================================ backdrop: synthwave horizon -->
+        <Grid IsHitTestVisible="False" Background="{StaticResource WindowBackground}">
+            <Ellipse Width="560" Height="560" VerticalAlignment="Bottom" HorizontalAlignment="Right" Margin="0,0,-140,-330" Opacity="0.16"
+                     Fill="{StaticResource SunsetGradient}" />
+            <Canvas VerticalAlignment="Bottom" Height="160" ClipToBounds="True" Opacity="0.10">
+                <Canvas.Background>
+                    <DrawingBrush TileMode="Tile" Viewport="0,0,64,32" ViewportUnits="Absolute">
+                        <DrawingBrush.Drawing>
+                            <GeometryDrawing Geometry="M0,0 L64,0 M0,0 L0,32">
+                                <GeometryDrawing.Pen>
+                                    <Pen Brush="#FF3EA5" Thickness="1" />
+                                </GeometryDrawing.Pen>
+                            </GeometryDrawing>
+                        </DrawingBrush.Drawing>
+                    </DrawingBrush>
+                </Canvas.Background>
+            </Canvas>
+        </Grid>
+
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <!-- ======================================================== header -->
+            <Grid Grid.Row="0" Margin="28,18,28,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Image Source="{StaticResource CassetteMark}" Width="62" Height="48" VerticalAlignment="Center" Effect="{StaticResource CyanGlow}" />
+                <StackPanel Grid.Column="1" Margin="16,0,0,0" VerticalAlignment="Center">
+                    <Grid>
+                        <!-- offset cyan "chromatic aberration" copy behind the pink title -->
+                        <TextBlock Text="REWIND TOGETHER" Style="{StaticResource H1}" FontSize="32" Foreground="{StaticResource CyanBrush}" Opacity="0.55" Margin="3,2,0,0">
+                            <TextBlock.RenderTransform>
+                                <SkewTransform AngleX="-8" />
+                            </TextBlock.RenderTransform>
+                        </TextBlock>
+                        <TextBlock Text="REWIND TOGETHER" Style="{StaticResource H1}" FontSize="32" Foreground="{StaticResource PinkGradient}">
+                            <TextBlock.RenderTransform>
+                                <SkewTransform AngleX="-8" />
+                            </TextBlock.RenderTransform>
+                        </TextBlock>
+                    </Grid>
+                    <TextBlock Text="CO-OP FOR RETRO REWIND  ·  BE KIND, PLEASE REWIND" Style="{StaticResource Eyebrow}" Margin="4,2,0,0" Foreground="{StaticResource TextDimBrush}" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <RadioButton Style="{StaticResource NavButton}" Content="▶  PLAY" IsChecked="{Binding IsPlayTab, Mode=TwoWay}" />
+                    <RadioButton Style="{StaticResource NavButton}" Content="▦  MODS" IsChecked="{Binding IsModsTab, Mode=TwoWay}" />
+                    <RadioButton Style="{StaticResource NavButton}" Content="✚  DIAGNOSTICS" IsChecked="{Binding IsDiagTab, Mode=TwoWay}" />
+                </StackPanel>
+            </Grid>
+
+            <!-- ======================================================== tabs -->
+            <Grid Grid.Row="1" Margin="28,6,28,10">
+                <ui:PlayView DataContext="{Binding Play}" Visibility="{Binding DataContext.IsPlayTab, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource Vis}}" />
+                <ui:ModsView DataContext="{Binding Mods}" Visibility="{Binding DataContext.IsModsTab, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource Vis}}" />
+                <ui:DiagnosticsView DataContext="{Binding Diag}" Visibility="{Binding DataContext.IsDiagTab, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource Vis}}" />
+            </Grid>
+
+            <!-- ======================================================== notice bar -->
+            <Border Grid.Row="2" Margin="28,0,28,8" CornerRadius="12" Padding="16,10" Background="{StaticResource Bg2Brush}"
+                    BorderThickness="1.5" BorderBrush="{Binding NoticeTone, Converter={StaticResource Tone}}"
+                    Visibility="{Binding NoticeVisible, Converter={StaticResource Vis}}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Ellipse Width="10" Height="10" Fill="{Binding NoticeTone, Converter={StaticResource Tone}}" VerticalAlignment="Center" Margin="0,0,12,0" />
+                    <TextBlock Grid.Column="1" Text="{Binding NoticeText}" VerticalAlignment="Center" />
+                    <Button Grid.Column="2" Style="{StaticResource SmallGhostButton}" Content="Dismiss" Margin="12,0,0,0" Command="{Binding DismissNoticeCommand}" />
+                </Grid>
+            </Border>
+
+            <!-- ======================================================== footer status chips -->
+            <Border Grid.Row="3" Background="#0E0C22" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,1,0,0" Padding="28,9">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Right" Text="{Binding VersionText}" Style="{StaticResource Eyebrow}" VerticalAlignment="Center" />
+                    <StackPanel Orientation="Horizontal">
+                        <StackPanel.Resources>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource Body}">
+                                <Setter Property="FontSize" Value="12.5" />
+                                <Setter Property="Foreground" Value="{StaticResource TextDimBrush}" />
+                                <Setter Property="VerticalAlignment" Value="Center" />
+                                <Setter Property="Margin" Value="7,0,22,0" />
+                            </Style>
+                            <Style TargetType="Ellipse">
+                                <Setter Property="Width" Value="8" />
+                                <Setter Property="Height" Value="8" />
+                                <Setter Property="VerticalAlignment" Value="Center" />
+                            </Style>
+                        </StackPanel.Resources>
+                        <Ellipse Fill="{Binding GameChipTone, Converter={StaticResource Tone}}" />
+                        <TextBlock Text="{Binding GameChip}" />
+                        <Ellipse Fill="{Binding Ue4ssChipTone, Converter={StaticResource Tone}}" Visibility="{Binding Ue4ssChip, Converter={StaticResource Vis}}" />
+                        <TextBlock Text="{Binding Ue4ssChip}" Visibility="{Binding Ue4ssChip, Converter={StaticResource Vis}}" />
+                        <Ellipse Fill="{Binding ModChipTone, Converter={StaticResource Tone}}" Visibility="{Binding ModChip, Converter={StaticResource Vis}}" />
+                        <TextBlock Text="{Binding ModChip}" Visibility="{Binding ModChip, Converter={StaticResource Vis}}" />
+                        <Ellipse Fill="{Binding SteamChipTone, Converter={StaticResource Tone}}" />
+                        <TextBlock Text="{Binding SteamChip}" />
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+        </Grid>
+
+        <!-- ============================================================ CRT scanlines -->
+        <Rectangle Fill="{StaticResource Scanlines}" Opacity="0.07" IsHitTestVisible="False" />
+
+        <!-- ============================================================ busy overlay -->
+        <Grid Background="#CC07061A" Visibility="{Binding BusyVisible, Converter={StaticResource Vis}}">
+            <Border Style="{StaticResource Card}" Width="520" VerticalAlignment="Center" HorizontalAlignment="Center" BorderBrush="{StaticResource PinkBrush}">
+                <StackPanel>
+                    <TextBlock Text="PLEASE WAIT" Style="{StaticResource Eyebrow}" Foreground="{StaticResource PinkBrush}" />
+                    <TextBlock Text="{Binding BusyTitle}" Style="{StaticResource H2}" Margin="0,6,0,14" />
+                    <ProgressBar Value="{Binding BusyProgress, Mode=OneWay}" Maximum="1" IsIndeterminate="{Binding BusyIndeterminate}" />
+                    <TextBlock Text="{Binding BusyDetail}" Style="{StaticResource Dim}" Margin="0,12,0,0" FontSize="13" />
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- ============================================================ dialog overlay -->
+        <Grid Background="#CC07061A" Visibility="{Binding DialogVisible, Converter={StaticResource Vis}}">
+            <Border Style="{StaticResource Card}" Width="600" MaxHeight="560" VerticalAlignment="Center" HorizontalAlignment="Center"
+                    BorderBrush="{Binding DialogTone, Converter={StaticResource Tone}}" BorderThickness="2">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <StackPanel Orientation="Horizontal">
+                        <Ellipse Width="12" Height="12" Fill="{Binding DialogTone, Converter={StaticResource Tone}}" VerticalAlignment="Center" Margin="0,0,12,0" />
+                        <TextBlock Text="{Binding DialogTitle}" Style="{StaticResource H2}" FontSize="20" TextWrapping="Wrap" MaxWidth="520" />
+                    </StackPanel>
+                    <ScrollViewer Grid.Row="1" Margin="0,14,0,18" VerticalScrollBarVisibility="Auto">
+                        <TextBlock Text="{Binding DialogMessage}" Style="{StaticResource Dim}" FontSize="14.5" LineHeight="21" />
+                    </ScrollViewer>
+                    <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
+                        <Button Style="{StaticResource GhostButton}" Content="{Binding DialogSecondary}" Command="{Binding DialogSecondaryCommand}" Margin="0,0,10,0"
+                                Visibility="{Binding DialogSecondary, Converter={StaticResource Vis}}" IsCancel="True" />
+                        <Button Style="{StaticResource PinkButton}" Content="{Binding DialogPrimary}" Command="{Binding DialogPrimaryCommand}" IsDefault="True" MinWidth="110" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</Window>

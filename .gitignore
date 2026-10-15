@@ -1,0 +1,26 @@
+# Build output: the release zip is built by dev/package.py, the native helper
+# by native/RewindNative/build.bat, the launcher by launcher/publish.ps1.
+dist/
+launcher/dist/
+**/bin/
+**/obj/
+Mods/RewindTogether/native/*.dll
+*.pdb
+*.ilk
+*.exp
+*.lib
+
+# Release archives and third-party binaries (the 1.6 tunnel ships Valve's
+# steam_api64.dll, which is not ours to redistribute).
+*.zip
+tunnel/
+
+# Local tools, caches and test-run traces
+.claude/
+.vs/
+*.user
+*.suo
+__pycache__/
+*.pyc
+dev/runs/
+*.log

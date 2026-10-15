@@ -1,0 +1,8 @@
+// Pre-2021 Steam layout: the library number maps straight to a path.
+"LibraryFolders"
+{
+	"TimeNextStatsReport"		"1612345678"
+	"ContentStatsID"		"-123456789"
+	"1"		"D:\\SteamLibrary"
+	"2"		"F:\\Games\\Steam Library"
+}
