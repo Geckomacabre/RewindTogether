@@ -404,6 +404,29 @@ function Hud.setXP(v)         return call("Change XP Value", 0, v) end
 function Hud.setTime(h, m)    return call("Change Time", h, m) end
 function Hud.setWeekday(d)    return call("Change Week Day", d) end
 
+--- A short message where the game shows its own ("Can't place that here"):
+--- the HUD's UI_Error child, which floats the text up and fades it out after
+--- about 0.04 s per character (1 s at least). Its Display Error takes an
+--- FString, so no FText is ever written; "{br}" is its line break. Red when
+--- isError. `seconds` keeps it up longer than that: its timer ticks every
+--- 0.01 s and Display Error has just set "Animation Time" in ticks. Measured on
+--- the real game: a centred dark box, gold text. False when there is no HUD
+--- (main menu, loading screens).
+function Hud.notice(text, isError, seconds)
+    local w = Hud.find(true)
+    if not w then return false end
+    local box = UE.TryGet(w, "UI_Error")
+    if not alive(box) then return false end
+    local ok = UE.TryCall(box, "Display Error", tostring(text), isError == true)
+    if ok and seconds then
+        local ticks = math.floor(seconds * 100)
+        if (tonumber(UE.TryGet(box, "Animation Time")) or 0) < ticks then
+            UE.TrySet(box, "Animation Time", ticks)
+        end
+    end
+    return ok
+end
+
 --- Run fn with the stand-in answering ANOTHER Blueprint class for the length
 --- of one call, then the HUD library again. For the skin picker
 --- (guestinput.lua): a wall's or a shelf's own Init Mesh Flow / Init Skin

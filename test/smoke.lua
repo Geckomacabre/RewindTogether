@@ -3760,6 +3760,62 @@ UE._resetLookups()
 UE.beginFrame()
 end
 
+-- ------------------------------------------- F6 without the UE4SS window --
+-- A fresh UE4SS has no console window and SafeMode (the default) keeps the
+-- overlay off, so F6 used to show nothing at all. It now puts a short status in
+-- the HUD's own floating message: UI_Error's Display Error, an FString.
+do
+local Commands = require("commands")
+local Overlay = require("overlay")
+local wasEnabled = Overlay.isEnabled()
+local saved = H.world.objects["UI_Player_Interface_C"]
+-- Every HUD widget earlier blocks made, listed or not, must look collected:
+-- hud.lua finds a cached one again by its path, and UE.alive reads the
+-- engine's garbage flag.
+local retired = {}
+for _, o in pairs(H.byName) do
+    if o.__class == "UI_Player_Interface_C" and not o.__garbage then
+        retired[#retired + 1] = o
+        o.__dead, o.__garbage = true, true
+    end
+end
+H.world.objects["UI_Player_Interface_C"] = nil
+UE._resetLookups()
+UE.beginFrame()
+Overlay.setEnabled(false)
+
+local okNoHud, shownNoHud = pcall(Commands.showStatus)
+check("F6 with no HUD (the main menu) shows nothing and does not fail",
+      okNoHud and shownNoHud == nil, tostring(shownNoHud))
+
+local notices = {}
+local box = H.obj("UI_Error_C", {
+    ["Display Error"] = function(_, text, isError) notices[#notices + 1] = { text = text, err = isError } end,
+})
+local widget = H.spawn("UI_Player_Interface_C", { UI_Error = box })
+UE.beginFrame()
+local shown = Commands.showStatus()
+local n = notices[1]
+check("F6 puts the status in the HUD's own message",
+      #notices == 1 and n.err == false and type(n.text) == "string"
+      and n.text:find("Rewind Together", 1, true) ~= nil and n.text:find("{br}", 1, true) ~= nil,
+      ("%d notice(s): %s"):format(#notices, n and tostring(n.text) or "-"))
+check("F6 reports what it put on screen", n ~= nil and shown == n.text, tostring(shown))
+check("F6 keeps it up for 8 s (the game's own timing is about 3)", box["Animation Time"] == 800,
+      tostring(box["Animation Time"]))
+
+Overlay.setEnabled(true)
+check("with the overlay on, F6 leaves the HUD's message alone",
+      Commands.showStatus() == "overlay" and #notices == 1, ("%d notice(s)"):format(#notices))
+
+Overlay.setEnabled(wasEnabled)
+widget.__dead, widget.__garbage = true, true
+H.world.objects["UI_Player_Interface_C"] = saved
+for _, o in ipairs(retired) do o.__dead, o.__garbage = nil, nil end
+UE._resetLookups()
+UE.beginFrame()
+end
+
 -- --------------------------------------------------------------- verdict --
 
 print("")

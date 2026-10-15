@@ -448,3 +448,11 @@ starts itself, sync/interaction verified, docs for strangers.
   config.lua comments, spawn.lua rt.fixpawns hint, mainmenu.lua warning) now say "press ~ twice".
   F6 still only writes to the log while SafeMode is on. Zip rebuilt; saves unchanged, settings
   restored. Not deployed to the real game's mod folder.
+- F6 visible without the UE4SS window. UConsole reflects nothing (CXXHeaderDump), so the game's
+  console can't be opened from Lua; instead Commands.showStatus -> Hud.notice puts a 3-line status
+  in the HUD's UI_Error box (Display Error(FString), "{br}" breaks, Animation Time raised to 800
+  ticks = 8 s) whenever the overlay is off (SafeMode default). Overlay.isEnabled added. Smoke: 5
+  checks (no HUD, notice text/colour, return value, 8 s, overlay on). Real game (user OK; saves
+  unchanged, GameUserSettings.ini restored, bridge files removed): F6 at the menu logs only; in the
+  store the real key shows the centred box; timer measured 268 ticks after ~2.7 s of 800. Deployed
+  hud.lua/overlay.lua/commands.lua (only this session's changes differed). Gotcha in PROJECT.md.

@@ -181,6 +181,12 @@ function Overlay.isVisible()
     return visible
 end
 
+--- False while SafeMode (or Config.ShowOverlay = false) keeps it off: text set
+--- then is stored but never drawn.
+function Overlay.isEnabled()
+    return enabled
+end
+
 --- Called from the mod's tick. Only touches the engine when something changed.
 function Overlay.tick()
     if not enabled then return end

@@ -77,6 +77,12 @@ each bug actually was.
   from store by the GameMode class (`Core_Gamemode_C` = in a store). `GetCurrentLevelName`
   still does not resolve; `Net.getCurrentMapName()` returns a hard-coded fallback.
 - **Joining from the main menu works** (OpenLevel → client in ~2 s). No save needed.
+- **On-screen text in Shipping: the HUD's own message box.** `UI_Player_Interface_C`'s
+  `UI_Error` child, `Display Error(FString, bool isError)`: a centred dark box, gold text,
+  `{br}` for a line break, shown for `max(len*4, 100)` ticks of 0.01 s. Raise its
+  `Animation Time` after the call to keep it up longer (`Hud.notice`, used by F6). The
+  game's console cannot be opened from Lua: `UConsole` reflects no functions and no state
+  (`CXXHeaderDump/Engine.hpp`). `rt.*` output reaches it only when typed there (~ twice).
 - **Loading a save without clicks:** `GameInstance."Save Slot" = "Player_Save<N>"`, then
   `OpenLevel("L_Player_Store_01")`. That's exactly what the game's menu does.
 - **The yellow hazard stripes** are `NavCollisionZone_C` ghost-mode blockers that the host's
@@ -389,7 +395,7 @@ Other things in the repo:
 | `test\` | The fake engine and the smoke test `Check-Mod.py` drives. |
 | `VERSION.txt` | Changelog, written as "what the bug actually was". Worth reading in full. |
 | `README.md` | User-facing docs. |
-| `FRIEND - START HERE.txt` | Guest-side setup instructions. |
+| `HOW TO PLAY - START HERE.txt` | The plain step-by-step guide for hosts and guests; ships in the zip. |
 
 Logs, after a run:
 

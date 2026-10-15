@@ -11,7 +11,7 @@ launcher/README.md, "Before a public release"):
     installs, unmodified, plus its LICENSE (MIT). The launcher installs
     from it with no download; it is fetched once into dist/cache/ and
     checked against the sha256 pinned in Core/Ue4ssSetup.cs
-    README.md, FRIEND - START HERE.txt, VERSION.txt
+    README.md, HOW TO PLAY - START HERE.txt, VERSION.txt
     Extras/ - the two port tools the README and the mod's own messages
     name (nobody needs them for Steam joining, so they stay out of sight)
     Source/RewindNative/ - the native helper's source, so nobody has to
@@ -38,7 +38,7 @@ FILES = [
     ("launcher/dist/RewindTogetherLauncher.exe", "RewindTogetherLauncher.exe"),
     ("LICENSE", "LICENSE.txt"),
     ("README.md", "README.md"),
-    ("FRIEND - START HERE.txt", "FRIEND - START HERE.txt"),
+    ("HOW TO PLAY - START HERE.txt", "HOW TO PLAY - START HERE.txt"),
     ("VERSION.txt", "VERSION.txt"),
     ("OPEN PORT FOR FRIENDS - Double click me.bat", "Extras/OPEN PORT FOR FRIENDS - Double click me.bat"),
     ("Enable-DirectHosting.ps1", "Extras/Enable-DirectHosting.ps1"),

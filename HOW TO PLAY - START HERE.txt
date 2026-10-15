@@ -1,0 +1,125 @@
+=============================================================
+  REWIND TOGETHER  -  play Retro Rewind together   (v1.7.0)
+  The simple guide. Read your part: HOST or GUEST.
+=============================================================
+
+  HOST  = the person whose store you all play in.
+  GUEST = everyone who visits that store.
+
+
+BEFORE YOU START  (both of you)
+-------------------------------
+
+  [ ] You both own Retro Rewind on Steam.
+  [ ] You are Steam friends with each other.
+  [ ] You both have the SAME zip of Rewind Together.
+  [ ] Steam has finished updating Retro Rewind for both of you.
+
+
+INSTALL  (both of you, once)
+----------------------------
+
+  1. Right-click the zip and choose "Extract All...".
+     (Opening it straight from the zip does not work.)
+
+  2. In the folder you just got, double-click
+         RewindTogetherLauncher.exe
+
+  3. If Windows says "Windows protected your PC":
+     click "More info", then "Run anyway".
+
+  That's it. The launcher finds the game, backs up your
+  saves, and installs everything. Nothing to download, nothing
+  to edit. If the game is open, it offers to close it.
+
+
+IF YOU ARE THE HOST
+-------------------
+
+  1. Open the launcher.
+  2. (Optional) Under SAVE, pick which save to play.
+  3. Press the big pink  HOST MY STORE  button.
+  4. The game starts. Load your save if it asks, and walk into
+     your store.
+  5. Done - your store is now open to your Steam friends.
+     The launcher shows "NOW HOSTING" and lists your GUESTS as
+     they arrive. Use "Invite" to send a friend a Steam invite.
+
+  Keep the game running while you play together. Save the way
+  you always do: it is YOUR store and YOUR save.
+
+  To stop: close the game, or press STOP in the launcher.
+
+
+IF YOU ARE A GUEST
+------------------
+
+  1. Wait until your host is standing in their store.
+  2. Open the launcher.
+  3. On the right, under VISIT A FRIEND, press  Refresh.
+  4. Your host appears under FRIENDS WITH THEIR STORE OPEN.
+     Press  JOIN  next to their name.
+  5. The game starts and drops you into their store.
+     You do NOT need a save of your own.
+
+  Also works: in Steam's friends list, right-click your host
+  and choose "Join Game".
+
+  Your own saves are never touched while you visit.
+
+
+PLAYING TOGETHER
+----------------
+
+  Everyone can work the store, with the normal controls:
+
+    Right-click ....... pick up / use
+    Left-click ........ put down / place
+    E / V / B ......... hand / build mode / paint (skin) tool
+    K ................. sell
+    At the till ....... Space closes the cash drawer,
+                        W walks away from the register
+
+  Guests: switch tools with E, V and B. The mouse wheel does
+  not switch tools for guests yet.
+
+  The HOST decides when the day ends. Guests see the day's
+  summary too and carry on into the next day.
+
+  Press F6 any time to see if you are connected and in sync.
+
+
+IF IT DOES NOT WORK
+-------------------
+
+  My host is not in the list
+    - The host must be INSIDE their store, not at the menu.
+    - Press Refresh again after a few seconds.
+    - You must be Steam friends.
+    - Check you both have the same mod version: the launcher's
+      PLAY tab shows it at the top.
+
+  It still will not connect over Steam
+    Use "Other ways to join (IP address, Steam ID)":
+    - JOIN BY STEAM ID: the host's ID is shown on their
+      launcher under INVITE A FRIEND.
+    - JOIN BY ADDRESS: install the free VPN Tailscale on both
+      PCs, sign in to the same Tailscale network, and type the
+      host's Tailscale address.
+
+  Steam updated the game for only one of you
+    You both need the same game version. Let Steam finish
+    updating on both PCs.
+
+  The game crashed
+    Just start it again. The mod remembers what it was doing,
+    turns that one feature off, and keeps going.
+
+  Anything else
+    In the launcher: DIAGNOSTICS > "Copy diagnostics".
+    Paste that to whoever sent you the mod. If you can, do it
+    on BOTH PCs (host and guest).
+
+
+  The Extras folder is only for playing without Steam (opening
+  a port on your router). Most people never need it.

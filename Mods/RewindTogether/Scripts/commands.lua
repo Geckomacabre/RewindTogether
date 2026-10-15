@@ -26,6 +26,7 @@ local LocalGM     = require("localgm")
 local Chan        = require("rpcchan")
 local Input       = require("input")
 local Native      = require("native")
+local Hud         = require("hud")
 
 local Commands = {}
 
@@ -518,6 +519,28 @@ function Commands.run(line, dev)
     return true
 end
 
+--- F6. The full report goes to the log as before. On screen: the overlay when
+--- it is on; SafeMode (the default) keeps it off, and a fresh UE4SS has no
+--- console window, so then a short version goes where the game shows its own
+--- messages (Hud.notice). Returns what was shown on screen, if anything.
+function Commands.showStatus()
+    handlers["rt.status"](nil, nil)
+    Overlay.set({
+        "Rewind Together",
+        Net.statusLine(),
+        "Steam ID: " .. tostring(Net.getLocalSteamId()),
+        "Console: rt.help",
+    })
+    if Overlay.isEnabled() then return "overlay" end
+    local c = Chan.stats()
+    local text = ("Rewind Together %s{br}%s{br}Sync channel: sent %d, received %d")
+        :format(Net.VERSION, Net.statusLine(), c.sent, c.received)
+    -- No HUD at the main menu: rt.status in the game's console (~ twice) works there.
+    -- 8 s: the game's own timing (0.04 s a character) is about 3 s for this.
+    if Hud.notice(text, false, 8) then return text end
+    return nil
+end
+
 function Commands.init(config)
     cfg = config
 
@@ -575,15 +598,7 @@ function Commands.init(config)
         handlers["rt.invite"](nil, nil)
     end)
 
-    bind(cfg.Keys.ToggleMenu, "menu", function()
-        handlers["rt.status"](nil, nil)
-        Overlay.set({
-            "Rewind Together",
-            Net.statusLine(),
-            "Steam ID: " .. tostring(Net.getLocalSteamId()),
-            "Console: rt.help",
-        })
-    end)
+    bind(cfg.Keys.ToggleMenu, "menu", Commands.showStatus)
 
     -- Guest presses are forwarded by guestinput.lua now - every one of the
     -- game's own action keys, aimed from the guest's camera, replayed on the

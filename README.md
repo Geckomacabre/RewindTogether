@@ -9,6 +9,9 @@ Version 1.7.0 · for Retro Rewind Steam build 23896268 ("Changelist 2308") · Wi
 
 ## Quick start
 
+New to this? **[HOW TO PLAY - START HERE.txt](HOW%20TO%20PLAY%20-%20START%20HERE.txt)** (also in the
+download) walks hosts and guests through every step.
+
 1. Download **Rewind Together**, right-click the zip and choose **Extract All...**
 2. Open **`RewindTogetherLauncher.exe`** from the unzipped folder. That's the whole install:
    it finds Retro Rewind, backs up your saves, and installs the UE4SS loader and the mod by
@@ -81,7 +84,7 @@ cannot be changed.
 |---|---|
 | **F7** | Host: open your store to friends (the launcher does this for you) |
 | **F5** | Join `Config.JoinTarget` or a hosting friend |
-| **F6** | Status, written to `RewindTogether.log` (the launcher's Diagnostics shows it) |
+| **F6** | Status: a short box in the middle of the screen for 8 seconds (in a store), and the full report in `RewindTogether.log` |
 
 The game's own console takes these commands: press **~** twice (or **F10** twice) to open
 it, type the command, press **Enter**; press **~** once more to close it. (UE4SS's GUI

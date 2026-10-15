@@ -520,6 +520,13 @@ CHANGES IN 1.7.0  -  tested on two copies of the game at
     twice, type, Enter. Checked on the real game: rt.status
     prints its report there. The mod's messages say the same.
 
+  * FIXED: F6 showed nothing on a default install (SafeMode
+    keeps the overlay off, and there is no UE4SS window). It
+    now puts version, status and the sync counters in the
+    game's own message box in the middle of the screen for
+    8 s; the full report still goes to the log. Checked on
+    the real game with the real key.
+
   * The guest's world now matches the host's:
       - money, XP, level, store value (Core_Gamemode_C) and the
         clock, weekday, season, weather (WeatherSystem_C) - the
