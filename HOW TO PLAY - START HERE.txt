@@ -1,5 +1,5 @@
 =============================================================
-  REWIND TOGETHER  -  play Retro Rewind together   (v1.7.2)
+  REWIND TOGETHER  -  play Retro Rewind together   (v1.7.3)
   The simple guide. Read your part: HOST or GUEST.
 =============================================================
 
@@ -100,6 +100,9 @@ PLAYING TOGETHER
 
   Press F6 any time to see if you are connected and in sync.
 
+  Press Esc for the pause menu (guests too). Its "Back to the
+  store" button gets you out if you are ever stuck.
+
   If Discord is open, your profile says "Playing Rewind
   Together" while you play. To turn that off: launcher,
   DIAGNOSTICS, switch off "Show 'Playing Rewind Together'".
@@ -154,6 +157,10 @@ IF IT DOES NOT WORK
   Steam updated the game for only one of you
     You both need the same game version. Let Steam finish
     updating on both PCs.
+
+  Stuck outside the store, in a wall, or somewhere odd
+    Press Esc and choose "Back to the store". A guest lands
+    next to the host; the host lands by the register.
 
   The game crashed
     Just start it again. The mod remembers what it was doing,

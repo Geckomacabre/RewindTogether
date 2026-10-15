@@ -172,6 +172,12 @@ Config.AutoSpawnGuestPawns = true
 -- simply what you want when you join a co-op game.
 Config.PlaceGuestsNextToHost = true
 
+-- "Back to the store" in the pause menu (Escape), and a pause menu for guests
+-- at all - the game only opens its own on the machine with the GameMode, the
+-- host's. A guest who presses it is put beside the host; the host is put by
+-- the register. rt.unstuck does the same from the console. Missing = on.
+Config.PauseMenuBackToStore = true
+
 -- If a guest ends up far below the host, pull them back up.
 --
 -- A guest who is merely spawned badly is fixed once. A guest who keeps ending

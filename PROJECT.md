@@ -109,6 +109,18 @@ each bug actually was.
   never hidden, no actor tick. npcsync.lua supplies each from the host. Do NOT switch the NPC's
   actor tick on for a guest: its Limit Walk Speed by rotation eases the actor toward
   GetControlRotation, which is zero without an AI controller.
+- **A guest has no navigation mesh, and the game falls back to the world origin.** Leaving the
+  till or any of the 18 `MachineActor_C` classes (the office computer `ComputerScreen_C`,
+  `Catalogue_C`, `Return_C`, `StaffBook_C`, `Calendar_Machine_C`, the snack machines,
+  `RepairStation_C`, the store name/level boards...) glides the pawn to an exit spot projected
+  with `K2_ProjectPointToNavigation`, and to (0, 0, 100) when that fails - always, on a guest:
+  outside the map (reported live, Oct 2026). guestinput.lua puts the guest on the exit spot once
+  the glide is over (`fixTillExit`, `tickMachines`). Anything else that projects onto the
+  navmesh on a guest will do the same.
+- **A guest has no pause menu of its own.** Escape is the pawn's `Input_OpenESC`, which first
+  casts GetGameMode to `Core_Gamemode_C` and stops there on a guest. pausemenu.lua opens the same
+  `UI_ESC-Menu_C` (WidgetBlueprintLibrary Create + AddToViewport) and adds "Back to the store"
+  to every pause menu (host too): a guest asks the host (action 12) to be placed beside them.
 - **The level's AI Director runs on a guest too** (ActorGatherer calls Init Director on every
   machine) and spawned walk-bys of its own there: Role Authority, no controller, frozen at the
   spawn points. npcsync.lua stops its timer and removes them; everything real arrives by

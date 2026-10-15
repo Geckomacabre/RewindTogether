@@ -46,6 +46,7 @@ local HELP = {
     { "rt.pawns",          "Show who has a character and who is stuck on black" },
     { "rt.fixpawns",       "HOST: give every pawnless guest a character now" },
     { "rt.bring",          "HOST: pull everyone to you (fixes 'stuck under the map')" },
+    { "rt.unstuck",        "Back to the store (same as the pause menu's button)" },
     { "rt.state",          "Show money/day/season/time as this machine sees them" },
     { "rt.props <what>",   "Dump an object's properties (gameinstance/gamemode/pawn/<Class>)" },
     { "rt.funcs <what>",   "Dump an object's functions - finds the real interaction name" },
@@ -385,6 +386,12 @@ handlers["rt.bring"] = function(_, dev)
     return true
 end
 
+-- The pause menu's "Back to the store", for when the menu itself is the problem.
+handlers["rt.unstuck"] = function(_, dev)
+    out(dev, require("pausemenu").backToStore())
+    return true
+end
+
 handlers["rt.sweep"] = function(_, dev)
     local n = Replication.sweep()
     out(dev, ("Replication sweep: %d actor(s) updated."):format(n))
@@ -470,6 +477,7 @@ handlers["rt.diag"] = function(_, dev)
     out(dev, "  Local pawn:     " .. UE.ClassNameOf(UE.GetPawn()))
     local st = Replication.stats()
     out(dev, ("  Replication:    %d classes / %d instances"):format(st.classes, st.instances))
+    for _, line in ipairs(require("pausemenu").report()) do out(dev, "  " .. line) end
     out(dev, "  Set LogLevel = \"debug\" in config.lua for full detail.")
     return true
 end

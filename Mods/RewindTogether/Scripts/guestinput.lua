@@ -82,6 +82,9 @@ local ACTIONS = {
     -- Not a key: the answer the guest clicked in a conversation (talksync.lua).
     -- Pitch carries the answer type.
     [11] = { label = "answer a conversation", special = "talkAnswer" },
+    -- Not a key: "Back to the store" in the pause menu (pausemenu.lua). The
+    -- host puts the guest beside the host, as rt.bring does.
+    [12] = { label = "back to the store", special = "backToStore" },
 }
 
 local cfg = nil
@@ -502,12 +505,37 @@ function freeTill()
     clearHostHints()
 end
 
+--- A character a machine left with its collision or its walking switched off
+--- (MachineActor_C turns both off for its glides and back on at the end):
+--- both on again, so it can be moved without falling through the floor.
+local function walkAgain(pawn)
+    if not UE.valid(pawn) then return end
+    pcall(function() pawn:SetActorEnableCollision(true) end)
+    local move = UE.TryGet(pawn, "CharacterMovement")
+    if UE.valid(move) and UE.TryGet(move, "MovementMode") == 0 then
+        pcall(function() move:SetMovementMode(1, 0) end)    -- MOVE_Walking
+    end
+end
+
+--- Host: a guest pressed "Back to the store". Their character goes beside the
+--- host, the same move rt.bring makes (spawn.lua), which refuses a character
+--- with collision or walking off - so those come back on first. Answered even
+--- without the native helper and during the end of the day: getting somebody
+--- out of the void needs neither.
+local function backToStore(pc, pawn)
+    if tillUser == pc:GetFullName() then freeTill() end
+    walkAgain(pawn)
+    local placed = require("spawn").placeGuest(pc, pawn, 0, "back to the store (asked from the pause menu)")
+    if placed then stats.replayed = stats.replayed + 1 end
+end
+
 local function replay(pc, code, loc, rot)
     local action = ACTIONS[code]
     if not action then return end
-    if cfg and cfg.ForwardGuestInteractions == false then return end
     local pawn = UE.TryGet(pc, "Pawn")
     if not (UE.alive(pawn) and UE.ClassNameOf(pawn) == "Player_Character_C") then return end
+    if action.special == "backToStore" then return backToStore(pc, pawn) end
+    if cfg and cfg.ForwardGuestInteractions == false then return end
 
     if not Native.installRedirect() then
         if not warnedNoNative then
@@ -992,6 +1020,89 @@ local function fixTillExit(m)
 end
 
 --[[
+    LEAVING ANY OTHER MACHINE. The office computer, the catalogue, the return
+    desk, the staff book, the calendar, the popcorn, slush and cotton candy
+    machines, the repair station, the store's name and level boards...
+    eighteen classes, all MachineActor_C (bpdump grep "class \S+ :
+    MachineActor_C"), share the till's glide from their base class
+    (bp/MachineActor.txt): "Animation of Moving player out of Machine" eases
+    the pawn to "Prefered Location where player get out of Machine" projected
+    onto the navigation mesh (@4286), and to (0, 0, 100) when the projection
+    fails - which on a guest it always does.
+
+    REPORTED (live test, 15 Oct 2026, the guest's own recording): the guest
+    got off the office computer and in the same second stood outside the map
+    behind the store, on black nothing, with no way back in.
+
+    "In Machine Mode" (not replicated: the guest's own copy) turns false only
+    when that glide is over (@7812, its FinishedFunc), so a guest who is then
+    far from the machine's exit spot is put on it, as at the till.
+]]
+local MACHINE       = "MachineActor_C"
+local MACHINE_EVERY = 0.25     -- s between looks at the machines (a guest's own game only)
+local MACHINE_NEAR  = 300.0    -- cm (XY) from the exit spot that counts as getting out fine
+local machineNext   = 0
+local machineIn     = nil      -- { obj, spot, name }: the machine this guest's game is using
+
+local function exitSpotOf(machine)
+    local spot = nil
+    pcall(function()
+        spot = UE.vec(UE.TryGet(machine, "Prefered Location where player get out of Machine"):K2_GetComponentLocation())
+    end)
+    return spot
+end
+
+local function tickMachines()
+    local now = os.clock()
+    if now < machineNext then return end
+    machineNext = now + MACHINE_EVERY
+    if machineIn then
+        if UE.alive(machineIn.obj) and UE.TryGet(machineIn.obj, "In Machine Mode") == true then return end
+        local was = machineIn
+        machineIn = nil
+        local pawn = UE.GetPawn()
+        local at = nil
+        pcall(function() at = UE.vec(pawn:K2_GetActorLocation()) end)
+        if not (at and was.spot) then return end
+        local dx, dy = at.X - was.spot.X, at.Y - was.spot.Y
+        if math.sqrt(dx * dx + dy * dy) <= MACHINE_NEAR then return end
+        pcall(UE.withHit, function(hit)
+            pawn:K2_SetActorLocation({ X = was.spot.X, Y = was.spot.Y, Z = was.spot.Z + 92.0 }, false, hit, true)
+        end)
+        Log.info("%s: left it at (%.0f, %.0f, %.0f) - no navigation mesh on a guest - put back at its exit",
+                 was.name, at.X, at.Y, at.Z)
+        return
+    end
+    for _, m in ipairs(UE.findAll(MACHINE) or {}) do
+        if UE.TryGet(m, "In Machine Mode") == true then
+            machineIn = { obj = m, spot = exitSpotOf(m), name = UE.ClassNameOf(m) or MACHINE }
+            Log.debug("using %s", machineIn.name)
+            return
+        end
+    end
+end
+
+--- Is this guest's own game using a machine (the computer, the catalogue...)?
+function GuestInput.inMachine() return machineIn ~= nil end
+
+--- Guest: "Back to the store" (pausemenu.lua, rt.unstuck). The guest's own
+--- character gets its collision and walking back - a machine can leave them
+--- off - and the host, who has the tested move, is asked to put it beside the
+--- host (action 12, backToStore above). Returns true when the host was asked.
+function GuestInput.backToStore()
+    if not UE.IsClient() then return false end
+    local pawn = UE.GetPawn()
+    if not UE.valid(pawn) then return false end
+    walkAgain(pawn)
+    machineIn, exitFix = nil, nil
+    local at = nil
+    pcall(function() at = UE.vec(pawn:K2_GetActorLocation()) end)
+    local sent = Chan.sendAction(12, at or { X = 0, Y = 0, Z = 0 }, { Pitch = 0, Yaw = 0, Roll = 0 }) > 0
+    Log.info("back to the store: %s", sent and "asked the host to put me beside them" or "could not reach the host")
+    return sent
+end
+
+--[[
     THE SKIN PICKER. When it opens on a guest's screen, what the guest picks
     is applied by the picker itself, UI_SkinMode "Material Selected_Event"
     (@4798) calling Set new Skin / Set new Mesh on the object - on the
@@ -1346,6 +1457,8 @@ function GuestInput.tickGuest()
     end
     tillWasOn = on
     if m then fixTillExit(m) end
+    -- Every other machine, the same way (above).
+    tickMachines()
 
     hookSkinPicker(os.clock())
     if #picked > 0 then
@@ -1371,6 +1484,7 @@ function GuestInput.reset()
     announced = false
     lastLocalPress = -1e9
     tillUser, tillWasOn, exitFix = nil, false, nil
+    machineIn, machineNext = nil, 0
     drawerSent, drawerSentAt = nil, 0
     billNext, billQuick, billSent, billSentAt = 0, nil, nil, 0
     billShown = { lines = nil }

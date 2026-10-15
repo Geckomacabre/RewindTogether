@@ -3816,6 +3816,254 @@ UE._resetLookups()
 UE.beginFrame()
 end
 
+-- A function of its own: the main chunk is at Lua's 200-local limit.
+;(function()
+print("\n-- leaving a machine on a guest, the pause menu, Back to the store --")
+-- REPORTED (live test, 15 Oct 2026, the guest's recording): the guest got off
+-- the office computer and stood outside the map. Every machine glides the
+-- player to its exit spot projected onto the navigation mesh, and to the
+-- world origin when that fails - always, on a guest (guestinput.lua).
+-- Self-contained: what earlier sections made is fetched again, not borrowed.
+local GuestInput2 = require("guestinput")
+local Chan = require("rpcchan")
+local upHook = H.hooks["/Script/Engine.PlayerController:ServerSetSpectatorLocation"]
+UE.beginFrame()
+local hostPC = UE.GetPlayerController()
+local rpcGuestPC = nil
+for _, pc in ipairs(H.world.objects["PlayerController"] or {}) do
+    if pc ~= hostPC and pc.Player ~= nil and pc.IsValid(pc) then rpcGuestPC = pc break end
+end
+check("the fake world still has a host and a guest controller", hostPC ~= nil and rpcGuestPC ~= nil and upHook ~= nil,
+      ("host %s, guest %s, hook %s"):format(tostring(hostPC ~= nil), tostring(rpcGuestPC ~= nil), tostring(upHook ~= nil)))
+local upSends = {}
+local savedUpSend = hostPC.ServerSetSpectatorLocation
+hostPC.ServerSetSpectatorLocation = function(_, l, r) upSends[#upSends + 1] = { loc = l, rot = r } end
+local realClock, realFindAll = os.clock, UE.findAll
+local fakeNow = realClock() + 500
+os.clock = function() return fakeNow end
+local function later(s) fakeNow = fakeNow + (s or 1) end
+
+local exitSpot = H.obj("SceneComponent", { __isActor = false,
+    K2_GetComponentLocation = function() return { X = 1500, Y = -900, Z = 4 } end })
+local computer = H.obj("ComputerScreen_C", { ["In Machine Mode"] = false,
+    ["Prefered Location where player get out of Machine"] = exitSpot })
+UE.findAll = function(short)
+    if short == "MachineActor_C" then return { computer } end
+    return realFindAll(short)
+end
+local at = { X = 1450, Y = -980, Z = 92 }
+local moves = {}
+local me = H.obj("Player_Character_C", {
+    K2_GetActorLocation = function() return at end,
+    K2_SetActorLocation = function(_, loc, _, _, teleport)
+        moves[#moves + 1] = { loc = loc, teleport = teleport }
+        at = loc
+        return true
+    end,
+})
+local savedHostPawn2, savedGuestPawn2 = hostPC.Pawn, rpcGuestPC.Pawn
+hostPC.Pawn = me
+H.theWorld.NetDriver.ServerConnection = H.obj("NetConnection", { __isActor = false })
+local function guestTick() UE.beginFrame() GuestInput2.tickGuest() later() end
+
+guestTick()
+computer["In Machine Mode"] = true
+guestTick()
+check("a guest sitting at a machine is noticed", GuestInput2.inMachine() == true, "not noticed")
+-- W: the guest's own game glides them out - to the world origin.
+computer["In Machine Mode"] = false
+at = { X = 0, Y = 0, Z = 192 }
+guestTick()
+local m1 = moves[1]
+check("a guest a machine dropped at the world origin is put back at its exit",
+      #moves == 1 and m1.loc.X == 1500 and m1.loc.Y == -900 and m1.loc.Z == 96 and m1.teleport == true
+      and not GuestInput2.inMachine(),
+      m1 and ("%d move(s), to (%s, %s, %s)"):format(#moves, tostring(m1.loc.X), tostring(m1.loc.Y), tostring(m1.loc.Z))
+         or "not moved")
+moves = {}
+computer["In Machine Mode"] = true
+guestTick()
+computer["In Machine Mode"] = false
+at = { X = 1520, Y = -860, Z = 92 }
+guestTick()
+check("a guest who got out at the machine's exit is left alone", #moves == 0, ("%d move(s)"):format(#moves))
+
+-- Back to the store, on the guest: walking back on, and the host is asked.
+me.SetActorEnableCollision = function(self, on) self.collides = on end
+me.CharacterMovement = H.obj("CharacterMovementComponent", { __isActor = false, MovementMode = 0,
+    SetMovementMode = function(self, mode) self.MovementMode = mode end })
+local upBefore = #upSends
+UE.beginFrame()
+local asked = GuestInput2.backToStore()
+local wire = upSends[#upSends]
+check("Back to the store on a guest switches its walking back on and asks the host",
+      asked == true and me.collides == true and me.CharacterMovement.MovementMode == 1
+      and #upSends > upBefore and math.abs((UE.field(wire.rot, "Roll") or 0) - 112) < 0.01,
+      ("asked=%s collides=%s mode=%s sends=%d"):format(tostring(asked), tostring(me.collides),
+       tostring(me.CharacterMovement.MovementMode), #upSends - upBefore))
+
+-- On the host: the guest goes beside the host, collision and walking on first.
+H.theWorld.NetDriver.ServerConnection = nil
+local hostMe = H.obj("Player_Character_C", {
+    K2_GetActorLocation = function() return { X = 2000, Y = -1000, Z = 92 } end,
+    K2_GetActorRotation = function() return { Pitch = 0, Yaw = 90, Roll = 0 } end })
+hostPC.Pawn = hostMe
+local teleported = nil
+local guestOnHost = H.obj("Player_Character_C", {
+    enabled = false,
+    GetActorEnableCollision = function(self) return self.enabled end,
+    SetActorEnableCollision = function(self, on) self.enabled = on end,
+    CharacterMovement = H.obj("CharacterMovementComponent", { __isActor = false, MovementMode = 0,
+        SetMovementMode = function(self, mode) self.MovementMode = mode end }),
+    K2_GetActorLocation = function() return { X = 0, Y = 0, Z = 192 } end,
+    K2_TeleportTo = function(_, loc) teleported = loc return true end,
+    GetAddress = function() return 0x9400 end,
+})
+rpcGuestPC.Pawn = guestOnHost
+UE.beginFrame()
+later()
+upHook(rpcGuestPC, { X = 0, Y = 0, Z = 192 }, UE.rotArg({ Pitch = 0, Yaw = 0, Roll = 112 }))
+Chan.pump()
+check("the host puts a guest who asked beside the host, collision and walking on first",
+      teleported ~= nil and math.abs(teleported.X - 2160) < 1 and math.abs(teleported.Y + 1000) < 1
+      and guestOnHost.enabled == true and guestOnHost.CharacterMovement.MovementMode == 1,
+      teleported and ("to (%.0f, %.0f) collision=%s mode=%s"):format(teleported.X, teleported.Y,
+       tostring(guestOnHost.enabled), tostring(guestOnHost.CharacterMovement.MovementMode)) or "not moved")
+
+-- The pause menu: our button goes in above "Return to menu".
+local PauseMenu = require("pausemenu")
+local ESC_CLASS = "/Game/VideoStore/core/widget/game_ui/UI_ESC-Menu.UI_ESC-Menu_C"
+local BTN_CLASS = "/Game/VideoStore/core/widget/button/UX_Button_ESC.UX_Button_ESC_C"
+local CLICKED = "/Game/VideoStore/core/widget/button/UX_Button_Base.UX_Button_Base_C:" ..
+                "BndEvt__UX_Button_Base_Button_K2Node_ComponentBoundEvent_0_OnButtonClickedEvent__DelegateSignature"
+local escCls = H.obj("WidgetBlueprintGeneratedClass", { __isActor = false })
+local btnCls = H.obj("WidgetBlueprintGeneratedClass", { __isActor = false })
+local created, nextAddr = {}, 0x7000
+local function widget(kind, fields)
+    nextAddr = nextAddr + 1
+    local a = nextAddr
+    local w = H.obj(kind, fields or {})
+    w.__isActor = false
+    w.GetAddress = function() return a end
+    return w
+end
+local lib = H.obj("WidgetBlueprintLibrary", { __isActor = false,
+    Create = function(_, outer, cls, owner)
+        local w
+        if cls == escCls then
+            w = widget("UI_ESC-Menu_C", { shown = false,
+                AddToViewport = function(self) self.shown = true end,
+                IsInViewport = function(self) return self.shown end,
+                ["Close ESC"] = function(self) self.shown = false self.closed = (self.closed or 0) + 1 end })
+        elseif cls == btnCls then
+            w = widget("UX_Button_ESC_C", { ["Set Text"] = function(self, t) self.text = t:ToString() end })
+        end
+        created[#created + 1] = { w = w, outer = outer, owner = owner }
+        return w
+    end })
+local savedStatics = {}
+for path, o in pairs({ [ESC_CLASS] = escCls, [BTN_CLASS] = btnCls, ["/Script/UMG.Default__WidgetBlueprintLibrary"] = lib,
+                       [ESC_CLASS .. ":Construct"] = H.obj("Function", { __isActor = false }),
+                       [CLICKED] = H.obj("Function", { __isActor = false }) }) do
+    savedStatics[path] = H.staticObjects[path]
+    H.staticObjects[path] = o
+end
+local function escMenu()
+    local box = widget("VerticalBox", { kids = {} })
+    box.GetChildrenCount = function(self) return #self.kids end
+    box.RemoveChild = function(self, w)
+        for i, k in ipairs(self.kids) do if k == w then table.remove(self.kids, i) return true end end
+        return false
+    end
+    box.AddChild = function(self, w)
+        self.kids[#self.kids + 1] = w
+        return widget("VerticalBoxSlot", { SetPadding = function(slot, m) w.padTop = m.Top end })
+    end
+    local function child(kind, name)
+        local w = widget(kind, { name = name, GetParent = function() return box end })
+        box.kids[#box.kids + 1] = w
+        return w
+    end
+    local menu = widget("UI_ESC-Menu_C", { ["Close ESC"] = function(self) self.closed = (self.closed or 0) + 1 end })
+    menu.UX_Button_Resume = child("UX_Button_ESC_C", "resume")
+    menu.UX_Button_Option = child("UX_Button_ESC_C", "options")
+    menu.UX_Button_Quit = child("UX_Button_ESC_C", "quit")
+    menu.TextBlock_lastSave = child("TextBlock", "last")
+    return menu, box
+end
+local menu, box = escMenu()
+later(10)
+PauseMenu.tick(fakeNow)
+check("the pause menu's build and our button's click are hooked",
+      H.hooks[ESC_CLASS .. ":Construct"] ~= nil and H.hooks[CLICKED] ~= nil, "not hooked")
+H.hooks[ESC_CLASS .. ":Construct"]({ get = function() return menu end })
+check("nothing is added inside the hook", #box.kids == 4, ("%d children"):format(#box.kids))
+PauseMenu.tick(fakeNow)
+local order = {}
+for _, k in ipairs(box.kids) do order[#order + 1] = k.name or (k.text and "ours") or "?" end
+local ours = box.kids[3]
+check("\"Back to the store\" goes in above Return to menu, spaced like the others",
+      table.concat(order, ",") == "resume,options,ours,quit,last" and ours.text == "Back to the store"
+      and ours.padTop == 20 and menu.UX_Button_Quit.padTop == 20 and menu.TextBlock_lastSave.padTop == 10,
+      table.concat(order, ",") .. " text=" .. tostring(ours and ours.text))
+H.hooks[ESC_CLASS .. ":Construct"]({ get = function() return menu end })
+PauseMenu.tick(fakeNow)
+check("a menu built again does not get a second one", #box.kids == 5, ("%d children"):format(#box.kids))
+
+-- Pressing it, on the host: by the register, and the menu closes.
+local spotComp = H.obj("SceneComponent", { __isActor = false,
+    K2_GetComponentLocation = function() return { X = 1700, Y = -1500, Z = 0 } end })
+local tillHere = H.spawn("MembershipMachine_C", { PlayerLocation = spotComp })
+local hostMoved = nil
+hostMe.K2_SetActorLocation = function(_, loc) hostMoved = loc return true end
+hostMe.SetActorEnableCollision = function() end
+UE._resetLookups()
+UE.beginFrame()
+H.hooks[CLICKED]({ get = function() return box.kids[1] end })   -- Resume: not ours
+PauseMenu.tick(fakeNow)
+check("other buttons' clicks are left to the menu", hostMoved == nil and (menu.closed or 0) == 0, "acted on Resume")
+H.hooks[CLICKED]({ get = function() return ours end })
+PauseMenu.tick(fakeNow)
+check("pressing it on the host stands the host by the register and closes the menu",
+      hostMoved ~= nil and hostMoved.X == 1700 and hostMoved.Y == -1500 and hostMoved.Z == 92 and menu.closed == 1,
+      hostMoved and ("to (%s, %s, %s), closed %s"):format(tostring(hostMoved.X), tostring(hostMoved.Y),
+       tostring(hostMoved.Z), tostring(menu.closed)) or "not moved")
+
+-- A guest's Escape: the game's own needs a GameMode; this opens the same menu.
+check("Escape on the host is left to the game", (function()
+    local before = #created
+    PauseMenu._guestEscape()
+    return #created == before
+end)(), "opened one on the host")
+H.theWorld.NetDriver.ServerConnection = H.obj("NetConnection", { __isActor = false })
+hostPC.Pawn = me
+UE.beginFrame()
+local before = #created
+PauseMenu._guestEscape()
+local opened = created[#created]
+check("Escape on a guest opens the game's pause menu, made for the guest's character",
+      #created == before + 1 and opened.w.shown == true and opened.outer == me,
+      ("%d made"):format(#created - before))
+PauseMenu._guestEscape()
+check("and Escape again closes it", opened.w.closed == 1 and opened.w.shown == false,
+      ("closed %s"):format(tostring(opened.w.closed)))
+
+-- Leave everything as it was.
+for path, o in pairs(savedStatics) do H.staticObjects[path] = o end
+for i, o in ipairs(H.world.objects["MembershipMachine_C"] or {}) do
+    if o == tillHere then table.remove(H.world.objects["MembershipMachine_C"], i) break end
+end
+H.theWorld.NetDriver.ServerConnection = nil
+hostPC.Pawn, rpcGuestPC.Pawn = savedHostPawn2, savedGuestPawn2
+hostPC.ServerSetSpectatorLocation = savedUpSend
+UE.findAll = realFindAll
+os.clock = realClock
+GuestInput2.reset()
+PauseMenu.reset()
+UE._resetLookups()
+UE.beginFrame()
+end)()
+
 -- --------------------------------------------------------------- verdict --
 
 print("")

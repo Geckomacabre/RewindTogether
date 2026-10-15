@@ -148,6 +148,7 @@ changed.
 | **F7** | Host: open your store to friends (the launcher does this for you) |
 | **F5** | Join `Config.JoinTarget` or a hosting friend |
 | **F6** | Status: a short box in the middle of the screen for 8 seconds (in a store), and the full report in `RewindTogether.log` |
+| **Esc** | The pause menu, guests included. **Back to the store** in it gets you out of anywhere you're stuck: a guest lands beside the host, the host by the register |
 
 <details>
 <summary><b>Console commands</b></summary>
@@ -163,6 +164,7 @@ have turned it on. A fresh install doesn't show one.)
 | `rt.join <ip>` | Join by address |
 | `rt.native` | The native helper that lets guests act in the store |
 | `rt.safety` | What switched itself off after a crash, and how to turn it back on |
+| `rt.unstuck` | Back to the store, the same as the pause menu's button |
 
 </details>
 
@@ -175,6 +177,8 @@ have turned it on. A fresh install doesn't show one.)
 - **The host decides when the day ends.** Guests see the summary and follow into the next day;
   its buttons are the host's.
 - **Guests can't change a shelf's model** (the mesh tool). Colours (the paint tool) work.
+- **The office computer's ordering screens are empty on a guest's screen** (placeholder text and
+  prices). Ordering movies is the host's job for now.
 - **The mouse wheel doesn't switch tools for guests yet.** Use E, V and B.
 - **NPC clothes and colours match the host's,** but a customer can look slightly different for a
   moment when it first appears.
@@ -194,6 +198,8 @@ have turned it on. A fresh install doesn't show one.)
 3. **If the game crashes, just start it again.** The mod notes what it was doing before each risky
    step. The next launch switches that one feature off and says which (`rt.safety`), so you can't
    get stuck in a crash loop.
+
+**Stuck outside the store, or in a wall?** Press **Esc** and choose **Back to the store**.
 
 To remove the mod, use **Uninstall** in the launcher's Mods tab (close the game first).
 

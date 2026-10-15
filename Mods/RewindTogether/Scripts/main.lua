@@ -53,6 +53,7 @@ local GuestInput  = require("guestinput")
 local DayEnd      = require("dayend")
 local TalkSync    = require("talksync")
 local MainMenu    = require("mainmenu")
+local PauseMenu   = require("pausemenu")
 local Commands    = require("commands")
 local DevBridge   = require("devbridge")
 local Launch      = require("launchfile")
@@ -371,6 +372,9 @@ local function tick()
     end
 
     phase("MainMenu.tick") MainMenu.tick(now)
+    -- "Back to the store" in the pause menu, in or out of a session, and a
+    -- guest's pause menu at all (pausemenu.lua).
+    phase("PauseMenu.tick") PauseMenu.tick(now)
 
     -- Detect entering/leaving a session.
     if mode ~= lastNetMode then
@@ -397,6 +401,7 @@ local function tick()
             GuestInput.reset()
             DayEnd.reset()
             TalkSync.reset()
+            PauseMenu.reset()
         end
     end
 
@@ -572,6 +577,7 @@ local function start()
     TalkSync.init(Config)
     Chat.init()
     MainMenu.init(Config)
+    PauseMenu.init(Config)
     Commands.init(Config)
     require("input").start()
     DevBridge.init(Commands)

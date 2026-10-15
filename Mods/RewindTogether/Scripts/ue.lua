@@ -362,8 +362,10 @@ local KNOWN_CLASSES = {
     ShelveTitle_C             = "/Game/VideoStore/asset/prop/shelve/ShelveTitle.ShelveTitle_C",
     Arcade_C                  = "/Game/VideoStore/asset/prop/arcade/Arcade.Arcade_C",
     CandyDispenser_Base_C     = "/Game/VideoStore/asset/prop/CandyDispenser/CandyDispenser_Base.CandyDispenser_Base_C",
-    -- guestinput.lua: the till.
+    -- guestinput.lua: the till, and every other machine (the computer, the
+    -- catalogue, the return desk...: eighteen subclasses of MachineActor_C).
     MembershipMachine_C       = "/Game/VideoStore/asset/prop/CheckOut/MembershipMachine.MembershipMachine_C",
+    MachineActor_C            = "/Game/VideoStore/core/blueprint/MachineActor.MachineActor_C",
     CheckOut_C                = "/Game/VideoStore/asset/prop/CheckOut/CheckOut.CheckOut_C",
     -- npcsync.lua: a guest's own AI Director, stopped.
     AI_Director_C             = "/Game/VideoStore/core/blueprint/AI_Director.AI_Director_C",

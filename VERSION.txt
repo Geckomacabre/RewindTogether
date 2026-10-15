@@ -1,5 +1,5 @@
 Rewind Together
-Version: 1.7.2
+Version: 1.7.3
 Built:   2026-10-15
 Game:    Retro Rewind (Steam AppID 3552140)
 Engine:  Unreal Engine 5.4
@@ -12,6 +12,35 @@ Unreal refuses mismatched builds.
 
 Check with:  rt.status   in the game's console (press ~ twice,
 type it, press Enter), or the launcher's Play tab.
+
+
+CHANGES IN 1.7.3  -  no more guests stranded outside the
+                     map, and a pause menu for guests.
+------------------------------------------------------
+  * FIXED: a guest who used the office computer - or the
+    catalogue, the return desk, the staff book, the calendar,
+    the popcorn, slush or cotton candy machine, the repair
+    station, the store name or level board (18 machines in
+    all) - was put outside the map when they got off it, on
+    black ground with no way back. REPORTED in a live test.
+    Leaving a machine glides you to its exit spot, found on
+    the navigation mesh; a guest's game has none (only the
+    host's does), and the game then aims at the middle of
+    the world instead. The guest is now put on the machine's
+    exit spot, as at the till since 1.7.0.
+
+  * NEW: guests have a pause menu. Esc did nothing on a guest:
+    the game only opens it where the GameMode lives (the
+    host). Now it opens for guests too. "Return to menu"
+    leaves the session.
+
+  * NEW: "Back to the store" in the pause menu, and rt.unstuck
+    in the console. A guest lands next to the host, the host
+    by the register. For whatever else strands somebody.
+
+  * KNOWN: the office computer's ordering pages show
+    placeholder text on a guest's screen; ordering is the
+    host's job for now.
 
 
 CHANGES IN 1.7.2  -  a mod browser for Nexus Mods in the

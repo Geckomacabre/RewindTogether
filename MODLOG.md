@@ -25,7 +25,7 @@ starts itself, sync/interaction verified, docs for strangers.
 - Code is 1.6.1 per VERSION.txt, but `Net.VERSION` still says "1.5.8" (rt.status lies).
 - Last two-player test: 2026-08-05 (1.5.8). 1.6.x never tested with a guest.
 - Oct 9 run was solo; no errors.
-- Deployed config.lua is an older file with PeerSteamIds set (friend "Walmeezie").
+- Deployed config.lua is an older file with PeerSteamIds set (a friend's).
 - Unverified guesses: `Config.SyncedState` property names, the interaction
   function name list in sync.lua.
 
@@ -489,3 +489,29 @@ starts itself, sync/interaction verified, docs for strangers.
   restores the id from "nexus-<id>", and unknown fields survive saves. 250 launcher tests.
   Phase 2 (sign in, one-click installs) needs Nexus to register the app: the email draft is in
   dist\nexus\registration-email.txt.
+- Live test, 15 Oct 2026 (two real players, the host's and the guest's own recordings): the guest
+  got off the office computer and was instantly outside the map behind the store, stuck on black
+  ground. Cause (bp\MachineActor.txt): leaving any MachineActor_C glides the pawn to "Prefered
+  Location where player get out of Machine" projected with K2_ProjectPointToNavigation (@4286) and
+  to Vec(0,0,100) when that fails; a guest has no navmesh. Same bug the till had in 1.7.0. 18
+  classes are machines (bpdump grep "class \S+ : MachineActor_C"): ComputerScreen, Catalogue,
+  Return, StaffBook, Calendar_Machine, CandyDispenser_Base, CheatScreen, ConsoleRental_Mat,
+  CottonCandyMachine, CustomMovieStation, PopcornMachine, RepairStation, SidewalkSign,
+  SlushMachine, SnackShelf, StoreExpansion_Machine, StoreLevel_Machine, StoreName. Fixed for all
+  of them (guestinput.lua tickMachines: "In Machine Mode" true -> false, then > 300 cm from the
+  exit spot -> put on it). The host was not dragged when the guest sat at the computer (host
+  recording). Also seen: the guest's computer order pages show the widget's design placeholders
+  (it reads a GameMode) - separate feature, listed as known.
+- Guests had no pause menu at all (Player_Character Input_OpenESC casts GetGameMode first).
+  pausemenu.lua: Escape on a guest opens UI_ESC-Menu_C itself; every pause menu gets "Back to the
+  store" (a UX_Button_ESC_C above "Return to menu", click via UX_Button_Base's bound event @312).
+  Guest: collision/walking back on, action 12 -> host Spawn.placeGuest beside the host. Host: by
+  the register's exit. rt.unstuck, Config.PauseMenuBackToStore (missing = on). Smoke 388 PASS
+  (15 new). Live, two copies on one PC (user's OK; their open game closed first, saves byte-identical
+  afterwards, GameUserSettings.ini unchanged, bridge/trace files removed, new scripts left deployed):
+  guest sat at the office computer, real W -> its glide went to (0, 0, 178), the mod put it at the
+  exit (2377, -1738), host saw the same spot. Real Escape on the guest opened the pause menu with
+  BACK TO THE STORE above RETURN TO MENU; a second Escape closed it. Guest stranded at the origin +
+  a real click on the button -> host log "(0, 0, 92) -> (2495, 41, 132)", beside the host. Host's
+  own menu has the button too (above the last-save line); clicking it while paused put the host at
+  the register's exit (1718, -1486) and unpaused.
