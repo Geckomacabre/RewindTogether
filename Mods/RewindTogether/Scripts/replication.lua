@@ -47,8 +47,21 @@ local instanceCount   = 0
 local active          = false
 
 -- How many configured classes to examine per sweep. Spreading the work stops
--- the periodic full scan from showing up as a hitch.
-local CLASSES_PER_SWEEP = 4
+-- the periodic full scan from showing up as a hitch. MEASURED (16 Oct 2026,
+-- frame times on two copies): four classes at a time froze the host's frame
+-- for up to 87 ms every 2 s - the tapes alone are 479 actors (5 ms to list,
+-- 40 us each to check). One class per call, called four times as often
+-- (main.lua), sweeps the same list as fast in a quarter of the hitch.
+local CLASSES_PER_SWEEP = 1
+-- Classes whose instances included a child actor on a full pass: only those
+-- need every instance asked who its parent is (see "Child actors" below).
+local childClasses = {}
+local childChecked = {}
+-- At most this many of one class per call: a big class (PickupActor, 568 in
+-- the test store) goes over a few calls, from where the last one stopped.
+-- The list is fetched again each call (actors are never kept across frames).
+local SWEEP_CHUNK = 120
+local sweepOffset = 0
 
 --------------------------------------------------------------------------
 
@@ -408,11 +421,21 @@ end
 --- Every live instance of a configured class. The config names Blueprints
 --- without their _C; the bare name is only asked about when no _C class by
 --- that name exists, so a native class can still be listed.
+local bareMissed = {}
 local function instancesOf(want)
+    -- Not actors at all - Shelve_Container and BoxStorage_Container are the
+    -- shelves' StaticMeshComponents (header dump) - so nothing here applies to
+    -- them, and finding them is a walk of every object in the engine.
+    -- MEASURED (16 Oct 2026): 155 ms of one host frame for the boxes' one.
+    if UE.classIsNotActor(want .. "_C") then return {} end
     local list = UE.findAll(want .. "_C")
     if list then return list end
-    if UE.classKnown(want .. "_C") then return {} end
-    return UE.findAll(want) or {}
+    if UE.classKnown(want .. "_C") or bareMissed[want] then return {} end
+    -- A native class by its bare name: asked once; names the game does not
+    -- have (Config's "AI_Character", "Customer") cost a walk each time.
+    list = UE.findAll(want)
+    if not list then bareMissed[want] = true end
+    return list or {}
 end
 
 --------------------------------------------------------------------------
@@ -469,11 +492,12 @@ function Replication.sweep()
     -- flags, see the top of this file. This was the step that crashed when
     -- the tick still ran off the game thread (main.lua); on the game thread,
     -- with UE.alive checked first, an actor from this frame's list is safe.
-    if sweepCursor > #classes then sweepCursor = 1 end
+    if sweepCursor > #classes then sweepCursor, sweepOffset = 1, 0 end
     for _ = 1, math.min(CLASSES_PER_SWEEP, #classes) do
         local want = classes[sweepCursor]
-        sweepCursor = sweepCursor % #classes + 1
-        if want then
+        if not want then
+            sweepCursor, sweepOffset = sweepCursor % #classes + 1, 0
+        else
             local isPawn = (want == "Player_Character")
                 or want:find("Character") ~= nil
                 or want:find("Staff") ~= nil
@@ -482,18 +506,38 @@ function Replication.sweep()
             -- patched, a child spawned later would replicate from birth and the
             -- guest's copy would outlive the sweep switching it off.
             local list = instancesOf(want)
-            local hasChild = false
-            for _, actor in ipairs(list) do
-                if UE.alive(actor) and isChildActor(actor) then hasChild = true break end
+            -- Once per class: does any of it come from a ChildActorComponent?
+            -- Asked of every instance on that first pass only, and again of
+            -- every instance only for classes where one did.
+            if not childChecked[want] then
+                childChecked[want] = true
+                for _, actor in ipairs(list) do
+                    if UE.alive(actor) and isChildActor(actor) then childClasses[want] = true break end
+                end
             end
-            for _, actor in ipairs(list) do
-                if UE.alive(actor) then
-                    if isChildActor(actor) then
+            local hasChild = childClasses[want] == true
+            local first = sweepOffset + 1
+            local last = math.min(#list, sweepOffset + SWEEP_CHUNK)
+            if last >= #list then
+                sweepCursor, sweepOffset = sweepCursor % #classes + 1, 0
+            else
+                sweepOffset = last
+            end
+            for i = first, last do
+                local actor = list[i]
+                -- valid, not alive, for the cheap reads: this frame's list.
+                -- alive (four engine calls) only before anything is written.
+                if UE.valid(actor) then
+                    if hasChild and isChildActor(actor) then
                         unreplicateChild(actor, want)
-                    else
-                        if not hasChild then patchClassOnce(actor, want, isPawn) end
-                        if needsPatch(actor, isPawn) and patchInstance(actor, isPawn) then
-                            patched = patched + 1
+                    elseif needsPatch(actor, isPawn) and UE.alive(actor) then
+                        if isChildActor(actor) then
+                            -- One that appeared since the class was first looked at.
+                            childClasses[want] = true
+                            unreplicateChild(actor, want)
+                        else
+                            if not hasChild then patchClassOnce(actor, want, isPawn) end
+                            if patchInstance(actor, isPawn) then patched = patched + 1 end
                         end
                     end
                 end
@@ -597,9 +641,16 @@ end
 function Replication.sweepAll()
     if not cfg or not active then return 0 end
     local total = 0
-    for _ = 1, math.ceil(#cfg.ReplicatedClasses / CLASSES_PER_SWEEP) do
-        total = total + Replication.sweep()
-    end
+    -- Whole classes here, from the first: completeness is the point.
+    local chunk = SWEEP_CHUNK
+    SWEEP_CHUNK, sweepCursor, sweepOffset = math.huge, 1, 0
+    local ok, err = pcall(function()
+        for _ = 1, math.ceil(#cfg.ReplicatedClasses / CLASSES_PER_SWEEP) do
+            total = total + Replication.sweep()
+        end
+    end)
+    SWEEP_CHUNK = chunk
+    if not ok then error(err, 0) end
     -- Says "newly", because it does not on the second call and that has now
     -- twice been read as a failure. sweepAll runs once when the session starts
     -- and again when a player joins; by the second run every actor already

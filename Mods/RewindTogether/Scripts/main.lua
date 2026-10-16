@@ -91,7 +91,7 @@ local bootTime       = os.clock()
 local autoJoinDone   = false
 
 local TICK_MS          = 100     -- 10 Hz driver; sub-systems rate-limit themselves
-local SWEEP_INTERVAL   = 2.0     -- seconds between replication slices: the whole list in ~14 s
+local SWEEP_INTERVAL   = 0.5     -- seconds between replication slices (one class each): the whole list in ~14 s
 local ROSTER_INTERVAL  = 2.0
 local NAMETAG_INTERVAL = 0.25    -- 4 Hz is plenty and keeps FindAllOf off the hot path
 local DISCOVERY_RETRY  = 3.0

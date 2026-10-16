@@ -58,7 +58,7 @@ local CLAIM_HOOK = SLOT_W .. ":" .. CLAIM_EVT
 local ROWS = {}
 for _, a in ipairs({ 15, 1, 3, 4, 5, 6, 7, 8, 9, 11, 16, 10, 14, 17, 18, 2, 12, 13 }) do ROWS[a] = true end
 
-local SEND_EVERY  = 2.0
+local SEND_EVERY  = 10.0     -- MEASURED: a send reads the month widget, 28 ms on the host's frame
 local RESEND      = 10.0
 local RETRY_AFTER = 4.0
 local SEEN_FOR    = 15.0
@@ -139,7 +139,7 @@ end
 --------------------------------------------------------------------------
 
 local seen = {}
-local lastSig, lastAt = nil, -1e9
+local lastSig, lastAt, lastBuild = nil, -1e9, -1e9
 
 --- The store's claimed rewards, from its calendar's "Achievement Reclame".
 local function claimedOnHost(m)
@@ -188,7 +188,11 @@ local function monthOnHost(w)
 end
 
 local function sendState(now)
-    if (now - lastAt) < SEND_EVERY then return end
+    if (now - lastAt) < SEND_EVERY or (now - lastBuild) < SEND_EVERY then return end
+    -- At most once per SEND_EVERY, sent or not. MEASURED (16 Oct 2026): with the
+    -- state unchanged, or no guest to send it to, this rebuilt it on every
+    -- tick - the calendar's month read is 28 ms of the host's frame.
+    lastBuild = now
     local m = machine()
     if not m then return end
     local fields = { c = listOf(claimedOnHost(m)) }
@@ -229,7 +233,7 @@ local function claim(pc, a)
     UE.TryCall(row, CLAIM_EVT)
     if UE.TryGet(row, "Reclame") ~= true then return tell(pc, false, "The reward did not go through.") end
     stats.claims = stats.claims + 1
-    lastAt = -1e9
+    lastAt, lastBuild = -1e9, -1e9
     local money, xp = tonumber(UE.TryGet(row, "Money")) or 0, tonumber(UE.TryGet(row, "XP")) or 0
     Log.info("calendar: %s claimed reward %d ($%.2f, %d XP)", UE.PlayerNameOf(pc) or "a guest", a, money / 100, xp)
     tell(pc, true, ("Claimed: $%d and %d XP for the store."):format(math.floor(money / 100), xp))
@@ -459,7 +463,7 @@ end
 function Cal.reset()
     seen, host, clicks, pending = {}, nil, {}, nil
     setUp, marked, monthDone, lastDay = nil, nil, nil, nil
-    lastSig, lastAt = nil, -1e9
+    lastSig, lastAt, lastBuild = nil, -1e9, -1e9
     hookedAt = nil
 end
 

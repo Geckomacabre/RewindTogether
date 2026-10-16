@@ -826,7 +826,7 @@ starts itself, sync/interaction verified, docs for strangers.
   method on an unchecked wrapper in a probe: `GetAttachParent():GetFName()` crashed both copies
   (EXCEPTION_ACCESS_VIOLATION reading 0x18 in UE4SS).
 
-### A customer's console rental with a guest (2026-10-16, not committed)
+### A customer's console rental with a guest (2026-10-16, 1.9.1)
 
 Working tree only: native.lua, talksync.lua, repairs.lua, replication.lua, test/smoke.lua.
 540 checks pass. The live test was stopped before the end (the user's call).
@@ -894,7 +894,7 @@ Working tree only: native.lua, talksync.lua, repairs.lua, replication.lua, test/
   the console, so its right click took nothing (the console had been shelved by game code, which
   may not be the same as a player shelving it).
 
-### Other players' bodies: crouching, jumping, a stack of tapes (2026-10-16, not committed)
+### Other players' bodies: crouching, jumping, a stack of tapes (2026-10-16, 1.9.1)
 
 Reported by the user while watching the two copies.
 - "No crouch animation, I just sink in the floor": a crouch shortens the capsule (bIsCrouched
@@ -914,6 +914,44 @@ Reported by the user while watching the two copies.
   along its Y) sat 2.6 cm apart along that axis. Each extra tape's Mesh (a child of its root,
   not replicated) is pushed out along the tape's thin axis to 3.6 cm from the one before, on other
   players' bodies only, and put back when it leaves the stack. Not checked live yet.
+
+### 1.9.2: the mod's own stutter (2026-10-16)
+
+- Reported from a real two-PC session on 1.9.1 (host here, a friend over the internet): "lots of
+  desync", "can't carry the movies", "really choppy". The host's log had no errors.
+- Measured on two copies, the guest through dev/netsim.py (150 ms, +/-25 ms, 2% loss):
+  - Not bandwidth: the guest's connection runs at CurrentNetSpeed 100000 on both sides
+    (driver MaxClientRate/MaxInternetClientRate 100000; UPlayer ConfiguredInternetSpeed 100000),
+    about 30 packets/s to the guest; 747 open actor channels.
+  - The host's walk on the guest: steady 2-9 cm per frame with a light recorder. A heavy one
+    (FindAllOf every frame) made both copies 20 fps and produced the jerks it was measuring.
+  - Frame times (LoopInGameThreadWithDelay(1) logging os.clock deltas): every 6th frame +10 ms
+    (the 10 Hz tick), and 50-150 ms frames every couple of seconds.
+  - Per-phase timing by swapping DevBridge.phase for a timer (time between phase calls):
+    ~15 ms of mod work per host tick; the worst single runs were the replication sweep (87 ms,
+    once 3-5 s), the calendar (28), the screen machines (23), the skin sync (23-58).
+- Fixed:
+  - Replication.sweep: Shelve_Container and BoxStorage_Container are StaticMeshComponents
+    (header dump), not actors - listing them cost a walk of every object (155 ms) and nothing
+    applies to them: skipped (UE.classIsNotActor). Classes a store lacks: ue.lua's learning walk
+    retried 6 times per name, and the bare-name fallback walked for names the game does not have
+    ("AI_Character", "Customer"); now a known path is the lookup (walked once as a backstop) and a
+    missing bare name is asked once. One class per call every 0.5 s, at most 120 actors per call
+    (the list is fetched again each call); valid() for the reads, alive() only before a write;
+    the child-actor question asked of a whole class once.
+  - Calendar, staff book, screen machines: sendState rebuilt its state on every tick once
+    SEND_EVERY had passed whenever nothing had changed or no guest was there to send to (the
+    broadcast never "succeeded", so lastAt never moved). A lastBuild timer; SEND_EVERY 10/11/13.
+  - Skin sync: AC_MeshSkin (and _Shelve) Load Material / Load Asset / Manual Load Asset are hooked;
+    the scan runs after one fires, and in full every 30 s and for a new guest.
+  - repairs.lua's lid check skips the case search with no case on the counter.
+- Result (30 s of frames, host / guest): no multi-second stalls; the worst job about 25-35 ms
+  (was 87-155); worst frames ~90-120 ms (two copies on one PC, ~30 fps each).
+- Not done: the guest applying a full skin list (to 62 ms), NpcSync (32), Bodies (30), the
+  guest's movement check (46), Chan.pump with big messages (40); Lua GC ~17 ms per full cycle.
+- "Can't carry the movies": not reproduced. Under lag the guest's pickup from a shelf landed in
+  its hand on both machines. (A second right click on the same, now empty slot puts the tape back:
+  the game's own rule, not a bug.)
 
 ### The staff book and the calendar's rewards for guests (2026-10-16)
 

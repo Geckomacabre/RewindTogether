@@ -94,7 +94,8 @@ local SECTORS = { "UI_StoreExpansion_Sector", "UI_StoreExpansion_Sector_1", "UI_
                   "UI_StoreExpansion_Sector_Adult", "UI_StoreExpansion_Sector_Northest_L",
                   "UI_StoreExpansion_Sector_Northest_R" }
 
-local SEND_EVERY  = 2.0      -- host: what the guests' copies need, when it changed
+local SEND_EVERY  = 13.0     -- host: what the guests' copies need, when it changed;
+                             -- MEASURED 23 ms on the host's frame a send, so not every 2 s
 local RESEND      = 10.0     -- host: and again regardless (a guest who just joined)
 local RETRY_AFTER = 4.0      -- guest: an order not answered by then goes again, once
 local SEEN_FOR    = 15.0     -- host: an order number from a guest, remembered
@@ -229,7 +230,7 @@ end
 
 local seen = {}            -- host: pc full name .. "#" .. number -> when
 local queue = {}           -- host: orders, one placed per tick (the widget keeps one in its frame)
-local lastSig, lastAt = nil, -1e9
+local lastSig, lastAt, lastBuild = nil, -1e9, -1e9
 
 local function tell(pc, ok, text)
     Chan.sendTo(pc, "uimres", { ok = ok and "1" or "0", t = text or "" })
@@ -253,7 +254,11 @@ local function roomsOnHost()
 end
 
 local function sendState(now)
-    if (now - lastAt) < SEND_EVERY then return end
+    if (now - lastAt) < SEND_EVERY or (now - lastBuild) < SEND_EVERY then return end
+    -- At most once per SEND_EVERY, sent or not. MEASURED (16 Oct 2026): with the
+    -- state unchanged, or no guest to send it to, this rebuilt it on every
+    -- tick - the calendar's month read is 28 ms of the host's frame.
+    lastBuild = now
     local fields = {}
     local sign = firstOf("SidewalkSign_C")
     if sign then fields.ss = tostring(round(UE.TryGet(sign, "Sale Type"))) end
@@ -418,7 +423,7 @@ function UIM.onGuest(pc, pawn, what, loc, rot)
         if sign and x >= 1 and x <= 6 and round(UE.TryGet(sign, "Sale Type")) ~= x then
             UE.TryCall(sign, "Set Sale Type", x)
             stats.ads = stats.ads + 1
-            lastAt = -1e9                -- everyone's sign, now
+            lastAt, lastBuild = -1e9, -1e9                -- everyone's sign, now
             Log.info("sidewalk sign: %s put up ad %d", UE.PlayerNameOf(pc) or "a guest", x)
         end
         return
@@ -779,7 +784,7 @@ function UIM.reset()
     queue, seen, host, clicks, pending, signWant = {}, {}, {}, {}, nil, nil
     editingName, holdUntil, lastHostSign = false, 0, nil
     boardDirty, boardLevel, boardPage = true, nil, 0
-    cardsDone, roomsSig, lastSig, lastAt = {}, nil, nil, -1e9
+    cardsDone, roomsSig, lastSig, lastAt, lastBuild = {}, nil, nil, -1e9, -1e9
     hooked = {}
 end
 

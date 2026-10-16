@@ -98,7 +98,7 @@ local REFUSALS = {
 }
 
 local SEP         = "\31"    -- between a person's fields (the channel escapes only % | = and newlines)
-local SEND_EVERY  = 2.0
+local SEND_EVERY  = 11.0     -- off the calendar's and the machines' beat (see calendar.lua)
 local RESEND      = 10.0
 local RETRY_AFTER = 4.0
 local SEEN_FOR    = 15.0
@@ -232,7 +232,7 @@ end
 --------------------------------------------------------------------------
 
 local seen = {}            -- pc full name .. "#" .. number -> when
-local lastSig, lastAt = nil, -1e9
+local lastSig, lastAt, lastBuild = nil, -1e9, -1e9
 local probePath = nil
 
 local function gatherer()
@@ -263,7 +263,11 @@ local function tell(pc, ok, text, extra)
 end
 
 local function sendState(now)
-    if (now - lastAt) < SEND_EVERY then return end
+    if (now - lastAt) < SEND_EVERY or (now - lastBuild) < SEND_EVERY then return end
+    -- At most once per SEND_EVERY, sent or not. MEASURED (16 Oct 2026): with the
+    -- state unchanged, or no guest to send it to, this rebuilt it on every
+    -- tick - the calendar's month read is 28 ms of the host's frame.
+    lastBuild = now
     local gm, g = gatherer()
     if not g then return end
     local applicants, hired = lists(g)
@@ -345,7 +349,7 @@ local function hire(pc, index, pay)
     asGuest(pc, function() card[HIRE_EVT](card, UE.TryGet(card, "UI_Catalogue_ButtonHireStaff")) end)
     if hiredCount(g) > before then
         stats.hired = stats.hired + 1
-        lastAt = -1e9
+        lastAt, lastBuild = -1e9, -1e9
         Log.info("staff book: %s hired %s", UE.PlayerNameOf(pc) or "a guest", who ~= "" and who or "someone")
         return tell(pc, true, ("%s is hired."):format(who ~= "" and who or "They"), { k = "hire" })
     end
@@ -366,7 +370,7 @@ local function fire(pc, index, pay)
     asGuest(pc, function() card[FIRE_EVT](card, UE.TryGet(card, "UI_Catalogue_Fired")) end)
     if hiredCount(g) < before then
         stats.fired = stats.fired + 1
-        lastAt = -1e9
+        lastAt, lastBuild = -1e9, -1e9
         Log.info("staff book: %s let %s go", UE.PlayerNameOf(pc) or "a guest", who ~= "" and who or "someone")
         return tell(pc, true, ("%s has been let go."):format(who ~= "" and who or "They"))
     end
@@ -384,7 +388,7 @@ local function setJob(pc, index, pay, job)
     local _, hired = lists(g)
     local now = nil
     eachOf(hired, function(i, s) if i == index then now = round(get(s, F.job)) return false end end)
-    lastAt = -1e9
+    lastAt, lastBuild = -1e9, -1e9
     if now == job then
         stats.jobs = stats.jobs + 1
         Log.info("staff book: %s gave an employee job %d", UE.PlayerNameOf(pc) or "a guest", job)
@@ -647,7 +651,7 @@ end
 
 function Staff.reset()
     seen, host, clicks, pending, drawn = {}, nil, {}, nil, {}
-    lastSig, lastAt = nil, -1e9
+    lastSig, lastAt, lastBuild = nil, -1e9, -1e9
     hooked = {}
 end
 

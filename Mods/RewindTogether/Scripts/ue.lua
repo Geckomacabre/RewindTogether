@@ -437,6 +437,16 @@ local KNOWN_CLASSES = {
     ShelveTitle_C             = "/Game/VideoStore/asset/prop/shelve/ShelveTitle.ShelveTitle_C",
     Arcade_C                  = "/Game/VideoStore/asset/prop/arcade/Arcade.Arcade_C",
     CandyDispenser_Base_C     = "/Game/VideoStore/asset/prop/CandyDispenser/CandyDispenser_Base.CandyDispenser_Base_C",
+    -- The rest of Config.ReplicatedClasses (pak listing), so none is learned by a walk.
+    Snack_Pack_4x_C           = "/Game/VideoStore/asset/prop/Snack/Snack_Pack_4x.Snack_Pack_4x_C",
+    PosterFrame_C             = "/Game/VideoStore/asset/prop/PosterFrame/PosterFrame.PosterFrame_C",
+    Standees_C                = "/Game/VideoStore/asset/prop/Standees/Standees.Standees_C",
+    TextSign_C                = "/Game/VideoStore/asset/prop/decoration/TextSign/TextSign.TextSign_C",
+    Door_C                    = "/Game/VideoStore/asset/prop/Door/Door.Door_C",
+    BP_Television_BASE_C      = "/Game/VideoStore/asset/prop/TV/BP_Television_BASE.BP_Television_BASE_C",
+    Staff_C                   = "/Game/VideoStore/asset/prop/StaffBook/Staff.Staff_C",
+    ["ConsoleRental_Console-Base_C"] =
+        "/Game/VideoStore/asset/prop/ConsoleRental/ConsoleRental_Console-Base.ConsoleRental_Console-Base_C",
     -- guestinput.lua: the till, and every other machine (the computer, the
     -- catalogue, the return desk...: eighteen subclasses of MachineActor_C).
     MembershipMachine_C       = "/Game/VideoStore/asset/prop/CheckOut/MembershipMachine.MembershipMachine_C",
@@ -547,6 +557,7 @@ local function classFor(short)
     -- Cheap, so tried every time until the class loads: a known path, or the
     -- engine's own package for a native class name.
     local guess = KNOWN_CLASSES[short]
+    local known = guess ~= nil
     if not guess and not short:find("_C$") then guess = "/Script/Engine." .. short end
     if guess then
         local c = UE.findObject(guess)
@@ -577,7 +588,11 @@ local function classFor(short)
     end
     local wait = classBackoff[short] or LEARN_FIRST_WAIT
     classMisses[short] = (classMisses[short] or 0) + 1
-    classRetryAt[short] = (classMisses[short] >= LEARN_GIVE_UP) and math.huge or (t + wait)
+    -- A class whose path we know is found by that, the moment it loads (above):
+    -- the walk is only a backstop for a wrong path, once. MEASURED (16 Oct
+    -- 2026): retried for classes a store does not have, it was 30-70 ms of a
+    -- frame each time, dozens of times in a session's first minutes.
+    classRetryAt[short] = (known or classMisses[short] >= LEARN_GIVE_UP) and math.huge or (t + wait)
     classBackoff[short] = math.min(wait * 2, LEARN_MAX_WAIT)
     return nil
 end
@@ -623,6 +638,13 @@ end
 --- Has a class by this name been found (and its path learned)?
 function UE.classKnown(short)
     return classInfo[short] ~= nil
+end
+
+--- Is it known to be something other than an actor (a component class, say)?
+--- false while unknown.
+function UE.classIsNotActor(short)
+    local info = classInfo[short]
+    return info ~= nil and info.actor == false
 end
 
 --- Tell the lookups where an actor class lives, when its path is already

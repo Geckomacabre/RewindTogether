@@ -2427,8 +2427,8 @@ local child = tape({ bReplicates = true, bReplicateMovement = false,
     SetReplicateMovement = function(self, v) self.bReplicateMovement = v patchedChild = patchedChild + 1 end,
     FlushNetDormancy = function() end,
 })
-UE.endFrame() UE.beginFrame()
-Rep.sweep()
+-- One class per sweep (replication.lua): a full round.
+for _ = 1, #repCfg.ReplicatedClasses do UE.endFrame() UE.beginFrame() Rep.sweep() end
 check("a child actor is not replicated - every machine builds its own - and is switched off if it was",
       turnedOff == 1 and child.bReplicates == false and patchedChild == 0,
       ("switched off %d, patched %d"):format(turnedOff, patchedChild))
@@ -2550,6 +2550,28 @@ SkinSync.tickHost(1003)
 local diff = sentStrings[#sentStrings]
 check("a change goes out on its own", #sentStrings == sentBefore + 1 and diff:find("Shelve_C;1500;-1800;0;2;4", 1, true) ~= nil
       and diff:find("Wall_C", 1, true) == nil, tostring(diff))
+-- MEASURED: that scan cost the host 25-58 ms of a frame every 2 s. With the
+-- skin component's own loading hooked, it runs only after a change.
+do
+    local LM = "/Game/VideoStore/core/blueprint/AC_MeshSkin.AC_MeshSkin_C:Load Material"
+    H.staticObjects[LM] = H.obj("Function", { __isActor = false, GetAddress = function() return 0x9100 end })
+    UE.beginFrame()
+    SkinSync.tickHost(1006)                 -- hooks it; the hook has not fired
+    hShelf.AC_MeshSkin["Current Skin Use"] = 5
+    local n0 = #sentStrings
+    UE.beginFrame()
+    SkinSync.tickHost(1009)
+    check("with the skin loads hooked, nothing is scanned or sent until one fires",
+          H.hooks[LM] ~= nil and #sentStrings == n0, ("hooked %s, %d sent"):format(tostring(H.hooks[LM] ~= nil), #sentStrings - n0))
+    if H.hooks[LM] then H.hooks[LM]() end
+    UE.beginFrame()
+    SkinSync.tickHost(1012)
+    local msg = sentStrings[#sentStrings]
+    check("and the next poll after one sends the change", #sentStrings == n0 + 1 and msg:find("Shelve_C;1500;-1800;0;2;5", 1, true) ~= nil,
+          tostring(msg))
+    hShelf.AC_MeshSkin["Current Skin Use"] = 4
+    H.staticObjects[LM] = nil
+end
 H.world.objects["Wall_C"], H.world.objects["Shelve_C"] = { gWall }, { gShelf, gDisplay }
 H.theWorld.NetDriver.ServerConnection = H.obj("NetConnection", { __isActor = false })
 UE.beginFrame()

@@ -541,7 +541,7 @@ end
 
 --- Each case's lid as the host's is.
 local function markCases()
-    if not crs then return end
+    if not crs or (tonumber(crs.k) or 0) == 0 then return end
     for i = 1, math.min(tonumber(crs.k) or 0, MAX_CASES) do
         local x, y, z, roll = (crs["k" .. i] or ""):match("^([%d%.%-]+),([%d%.%-]+),([%d%.%-]+),([%d%.%-]+)$")
         local at = x and { X = tonumber(x), Y = tonumber(y), Z = tonumber(z) } or nil

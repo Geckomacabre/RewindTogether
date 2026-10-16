@@ -1,5 +1,5 @@
 Rewind Together
-Version: 1.9.1
+Version: 1.9.2
 Built:   2026-10-16
 Game:    Retro Rewind (Steam AppID 3552140)
 Engine:  Unreal Engine 5.4
@@ -12,6 +12,30 @@ Unreal refuses mismatched builds.
 
 Check with:  rt.status   in the game's console (press ~ twice,
 type it, press Enter), or the launcher's Play tab.
+
+
+CHANGES IN 1.9.2  -  far fewer stutters, for host and guests.
+------------------------------------------------------
+  * FIXED: the game froze for a moment every few seconds, and
+    for seconds at a time now and then, while playing together.
+    It was the mod's own housekeeping, not the connection:
+      - a check that looked through every object in the game
+        for things that cannot be shared at all (shelf slots,
+        and kinds of objects a store does not have);
+      - the calendar, the staff book and the store's screen
+        machines re-reading their state ten times a second,
+        even with nothing new and nobody to send it to;
+      - the paint and skins of every wall and piece of
+        furniture read every 2 seconds - now only after
+        something is painted or placed;
+      - the replication check doing a quarter of the store at
+        once - now a little at a time.
+    Measured on two copies of the game with a simulated
+    150 ms internet connection: the longest pauses went from
+    several seconds to about a tenth of a second.
+
+  * Still to do: a few smaller pauses remain (a guest applying
+    the store's paint, customers, other players' bodies).
 
 
 CHANGES IN 1.9.1  -  renting out consoles as a guest, and

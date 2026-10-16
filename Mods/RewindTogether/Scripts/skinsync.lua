@@ -76,6 +76,45 @@ local GIVE_UP_AFTER = 40.0    -- guest: forget it; the next full list resends it
 -- same class can sit at the same spot, and nobody can see them anyway.
 local HIDDEN_BELOW  = -1000
 
+--[[
+    CHANGES, NOT A SCAN. MEASURED (16 Oct 2026, frame times on two copies):
+    the host's poll read every paintable wall and piece of furniture every 2 s
+    - 25 to 58 ms of one frame, a stutter on the host and so on every guest. A
+    skin or a mesh only changes through the component's own Load Material,
+    Load Asset or Manual Load Asset (Wall @1459-@2404, Shelve @1555), so those
+    are hooked: the scan runs once something was repainted or placed, and in
+    full every FULL_EVERY and for a new guest. Without the hooks (not loaded
+    yet, or not hookable) it polls as before.
+]]
+local CHANGE_FNS = {
+    "/Game/VideoStore/core/blueprint/AC_MeshSkin.AC_MeshSkin_C:Load Material",
+    "/Game/VideoStore/core/blueprint/AC_MeshSkin.AC_MeshSkin_C:Load Asset",
+    "/Game/VideoStore/core/blueprint/AC_MeshSkin.AC_MeshSkin_C:Manual Load Asset",
+    "/Game/VideoStore/core/blueprint/AC_MeshSkin_Shelve.AC_MeshSkin_Shelve_C:Load Material",
+    "/Game/VideoStore/core/blueprint/AC_MeshSkin_Shelve.AC_MeshSkin_Shelve_C:Load Asset",
+    "/Game/VideoStore/core/blueprint/AC_MeshSkin_Shelve.AC_MeshSkin_Shelve_C:Manual Load Asset",
+}
+local dirty = false           -- host: something changed since the last scan
+local hookedFns = {}          -- path -> function address hooked
+local nextHookTry = 0
+
+local function hookChanges(now)
+    if now < nextHookTry then return end
+    nextHookTry = now + 5
+    for _, path in ipairs(CHANGE_FNS) do
+        local f = StaticFindObject(path)
+        local addr = nil
+        if UE.valid(f) then pcall(function() addr = f:GetAddress() end) end
+        if addr and hookedFns[path] ~= addr then
+            if pcall(function()
+                RegisterHook(path, function() dirty = true end)
+            end) then
+                hookedFns[path] = addr
+            end
+        end
+    end
+end
+
 local cfg = nil
 local stats = { sent = 0, received = 0, applied = 0, unmatched = 0,
                 titlesSent = 0, titlesReceived = 0, titlesApplied = 0 }
@@ -142,6 +181,7 @@ local sendTitles, tickTitles      -- shelf titles, defined further down
 function SkinSync.tickHost(now)
     if not UE.IsServer() then return end
     finishMeshChoices()
+    hookChanges(now)
     if now - lastPoll < POLL_EVERY then return end
     lastPoll = now
 
@@ -152,6 +192,10 @@ function SkinSync.tickHost(now)
     end
     -- A new guest has seen nothing yet: everything, now and again in 30 s.
     local full = guests > lastGuests or (now - lastFull) > FULL_EVERY
+    -- The next poll after a change: by then the repaint's own loading is done.
+    if not full and next(hookedFns) ~= nil and not dirty then return end
+    dirty = false
+    stats.scans = (stats.scans or 0) + 1
     lastGuests = guests
 
     local current, entries = {}, {}
