@@ -35,6 +35,21 @@ local function record(who, text)
     Chat.render()
 end
 
+local statusLine = nil
+
+--- A standing line at the top (the character select's "3 of 14"), until
+--- cleared with nil. On this screen only.
+function Chat.status(text)
+    statusLine = (type(text) == "string" and text ~= "") and text or nil
+    Chat.render()
+end
+
+--- A line from the mod itself, on this screen only.
+function Chat.notice(text)
+    if type(text) ~= "string" or text == "" then return end
+    record("Rewind Together", text)
+end
+
 --- Lines that have not aged out yet, for the overlay.
 function Chat.recentLines()
     local now = os.clock()
@@ -47,6 +62,7 @@ function Chat.recentLines()
     if composing then
         out[#out + 1] = "> " .. buffer .. "_"
     end
+    if statusLine then table.insert(out, 1, statusLine) end
     return out
 end
 

@@ -441,6 +441,36 @@ local KNOWN_CLASSES = {
     -- catalogue, the return desk...: eighteen subclasses of MachineActor_C).
     MembershipMachine_C       = "/Game/VideoStore/asset/prop/CheckOut/MembershipMachine.MembershipMachine_C",
     MachineActor_C            = "/Game/VideoStore/core/blueprint/MachineActor.MachineActor_C",
+    -- A machine's hold-and-drag steps (machines.lua).
+    ["Cursor-Movement_Distance_C"] = "/Game/VideoStore/core/blueprint/cursor-movement/Cursor-Movement_Distance.Cursor-Movement_Distance_C",
+    -- The return desk's parts (mirror.lua finds the guest's copies).
+    Return_C               = "/Game/VideoStore/asset/prop/Return/Return.Return_C",
+    Rewinder_C             = "/Game/VideoStore/asset/prop/Rewinder/Rewinder.Rewinder_C",
+    DropBox_C              = "/Game/VideoStore/asset/prop/DropBox/DropBox.DropBox_C",
+    Scanner_Dropbox_C      = "/Game/VideoStore/asset/prop/DropBox/Scanner_Dropbox.Scanner_Dropbox_C",
+    Scanner_Checkout_C     = "/Game/VideoStore/asset/prop/DropBox/Scanner_Checkout.Scanner_Checkout_C",
+    videotape_FullDetail_C = "/Game/VideoStore/asset/prop/vhs/videotape_FullDetail.videotape_FullDetail_C",
+    MoviePlayer_C          = "/Game/VideoStore/asset/prop/MoviePlayer/MoviePlayer.MoviePlayer_C",
+    -- What listens for the time of day (worldsync.lua): two components, three actors.
+    Light_DayTimeToggle_C  = "/Game/VideoStore/asset/lighting/Light_DayTimeToggle.Light_DayTimeToggle_C",
+    VFX_DayTimeToggle_C    = "/Game/VideoStore/asset/lighting/VFX_DayTimeToggle.VFX_DayTimeToggle_C",
+    Outside_Light_Base_C   = "/Game/VideoStore/asset/lighting/Outside_Light_Base.Outside_Light_Base_C",
+    Audio_TimeOfDay_C      = "/Game/VideoStore/core/sfx/AmbienceSystem/Audio_TimeOfDay.Audio_TimeOfDay_C",
+    Audio_AmbienceSystem_C = "/Game/VideoStore/core/sfx/AmbienceSystem/Audio_AmbienceSystem.Audio_AmbienceSystem_C",
+    -- Machines the host buys (worldsync.lua makes them usable on guests).
+    PopcornMachine_C        = "/Game/VideoStore/asset/prop/Popcorn/PopcornMachine.PopcornMachine_C",
+    SlushMachine_C          = "/Game/VideoStore/asset/prop/Slush/SlushMachine.SlushMachine_C",
+    CottonCandyMachine_C    = "/Game/VideoStore/asset/prop/CottonCandy/CottonCandyMachine.CottonCandyMachine_C",
+    ConsoleRental_Mat_C     = "/Game/VideoStore/asset/prop/ConsoleRental/ConsoleRental_Mat.ConsoleRental_Mat_C",
+    ConsoleRental_Station_C = "/Game/VideoStore/asset/prop/ConsoleRental/ConsoleRental_Station.ConsoleRental_Station_C",
+    CustomMovieStation_C    = "/Game/VideoStore/asset/prop/CustomMovieStation/CustomMovieStation.CustomMovieStation_C",
+    RepairStation_C         = "/Game/VideoStore/asset/prop/RepairStation/RepairStation.RepairStation_C",
+    SidewalkSign_C          = "/Game/VideoStore/asset/prop/SidewalkSign/SidewalkSign.SidewalkSign_C",
+    SnackShelf_C            = "/Game/VideoStore/asset/prop/Snack/SnackShelf.SnackShelf_C",
+    -- concessions.lua: what the concession machines make.
+    PopcornCup_C            = "/Game/VideoStore/asset/prop/Popcorn/PopcornCup.PopcornCup_C",
+    SlushCup_C              = "/Game/VideoStore/asset/prop/Slush/SlushCup.SlushCup_C",
+    CottonCandy_Stick_C     = "/Game/VideoStore/asset/prop/CottonCandy/CottonCandy_Stick.CottonCandy_Stick_C",
     -- computer.lua: the office computer, and the market it sells from.
     ComputerScreen_C          = "/Game/VideoStore/asset/prop/Computer/ComputerScreen.ComputerScreen_C",
     Market_C                  = "/Game/VideoStore/core/blueprint/Market.Market_C",

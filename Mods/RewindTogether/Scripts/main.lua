@@ -40,6 +40,7 @@ local Replication = require("replication")
 local Players     = require("players")
 local Spawn       = require("spawn")
 local Bodies      = require("bodies")
+local Character   = require("character")
 local Chan        = require("rpcchan")
 local LocalGM     = require("localgm")
 local Overlay     = require("overlay")
@@ -56,6 +57,9 @@ local MainMenu    = require("mainmenu")
 local PauseMenu   = require("pausemenu")
 local Thrown      = require("thrown")
 local Computer    = require("computer")
+local Mirror      = require("mirror")
+local Conc        = require("concessions")
+local UIM         = require("uimachines")
 local Commands    = require("commands")
 local DevBridge   = require("devbridge")
 local Launch      = require("launchfile")
@@ -406,7 +410,11 @@ local function tick()
             PauseMenu.reset()
             Thrown.reset()
             Computer.reset()
+            Mirror.reset()
+            Conc.reset()
+            UIM.reset()
             Bodies.reset()
+            Character.reset()
         end
     end
 
@@ -455,6 +463,8 @@ local function tick()
     -- and skips its own, so this needs no authority and no agreement with the
     -- other side.
     phase("Bodies.tick") Bodies.tick(now)
+    -- Your own choice of how you look to the others (F4), and theirs, here.
+    phase("Character.tick") Character.tick(now)
 
     -- Guest-side, once: the client has no GameMode, which is the one object
     -- the HUD, the clock, the money and every store terminal read from. Build
@@ -471,6 +481,8 @@ local function tick()
     phase("GuestInput.tickGuest") GuestInput.tickGuest()
     -- The office computer's pages, from the host (computer.lua).
     phase("Computer.tickGuest") Computer.tickGuest(now)
+    -- The catalogue, the expansion map, the sidewalk sign, the level board (uimachines.lua).
+    phase("UIM.tickGuest") UIM.tickGuest(now)
     -- A conversation the host stopped saying closes (talksync.lua).
     phase("TalkSync.tickGuest") TalkSync.tickGuest()
 
@@ -491,6 +503,10 @@ local function tick()
         -- A guest's conversations, on the guest's screen (talksync.lua).
         phase("TalkSync.tickHost") TalkSync.tickHost(now)
         phase("Sync.tickHost") Sync.tickHost(now)
+        -- The machines' animations, to the guests (mirror.lua).
+        phase("Mirror.tickHost") Mirror.tickHost(now)
+        phase("Conc.tickHost") Conc.tickHost(now)
+        phase("UIM.tickHost") UIM.tickHost(now)
     end
 
     if (now - lastSweep) > SWEEP_INTERVAL then
@@ -575,6 +591,7 @@ local function start()
     Players.init(Config)
     Spawn.init(Config)
     Bodies.init(Config)
+    Character.init()
     LocalGM.init(Config)
     Sync.init(Config)
     Hud.init(Config)
@@ -589,6 +606,9 @@ local function start()
     PauseMenu.init(Config)
     Thrown.init(Config)
     Computer.init(Config)
+    Mirror.init()
+    Conc.init()
+    UIM.init()
     Commands.init(Config)
     require("input").start()
     DevBridge.init(Commands)

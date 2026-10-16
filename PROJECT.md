@@ -279,7 +279,20 @@ each bug actually was.
   `FDateTime` has no readable fields (`Ticks` reads nil). User-defined struct fields carry their
   GUID suffix (`BaseStructure_2_FBB12C464AE570CAFD12ED8506160683`); the header dump has them.
 - **test/smoke.lua's main chunk is at Lua's 200-local limit.** A new section goes inside
-  `do ... end`.
+  `do ... end`, and keeps its own state in one table.
+- **An array out-parameter comes back as a Lua list of parameter wrappers** (`RemoteUnrealParam`):
+  `local t = {}; w["Return Catalogue Decoration product class"](w, t)` gives `t[1]:get()` .. the
+  class objects. Release the table after (`UE.releaseOut`).
+- **A soft-pointer property's value can be handed straight back as a parameter.** The catalogue
+  card's `Generate Text(name, price, level, thumb)` drew the slushie's picture from the machine's
+  own `Product Image Thumbnail` value. A Lua string for a TSoftObjectPtr parameter is a native
+  crash (worldsync.lua's season level).
+- **Changing a SkeletalMeshComponent's mesh forgets a single-node animation in a shipping build**
+  (`SetAnimation` keeps `AnimationData` only WITH_EDITOR): the character screen's figure went to
+  its bind pose on every new body. Play it again after each swap.
+- **Core_Gamemode `Change Money` with no HUD widget answers "not enough money"** after it has
+  written the new total (@430 -> @810). Never null the GameMode's "UI Game Interface" around a
+  call that may charge: guestinput.lua's guest window swaps in a second, never-shown HUD.
 - **UE4SS caches every member name by a pointer into the Lua string, and never copies it.**
   `obj.Mesh`, `obj:Possess()`, `obj[name]`: UE4SS+0x22b590 memoises the name's wide form in a
   static `unordered_map<string_view, wstring>` whose keys point into the Lua strings themselves.
@@ -298,6 +311,13 @@ each bug actually was.
 | `devbridge.lua` | Dev-only file command bridge + phase trace (inert without its switch file) |
 | `input.lua` | Keys polled on the game thread |
 | `hud.lua` | Builds the game's own HUD on a guest and feeds it the host's numbers; arms the HUD stand-in and mirrors the hand socket into `Object Hold` |
+| `character.lua` | Your chosen look: the file, the first-time screen, and a guest's look to the host as FNames (a route other features share: `onName`) |
+| `charscreen.lua` | The character screen: the game's pause-menu frame and buttons, a figure in the world, every row |
+| `creator.lua`, `wardrobe.lua` | What a character can be made of (generated from the dumps by `dev/make_wardrobe.py`), and a spec -> look |
+| `machines.lua` | A guest seated at the HOST's look-around machines (return desk, snack shelves), clicks and drags replayed |
+| `mirror.lua` | The host's machine animations (the desk, the rewinder, the phone) on the guests' copies |
+| `concessions.lua` | Popcorn, slushie, cotton candy: made on the guest's own copy, made real by the host |
+| `uimachines.lua` | The catalogue, the expansion map, the sidewalk sign, the store name and the level board for guests |
 | `worldsync.lua` | Sign, expansions, season level, sky/lights/fog/collection values, stripes |
 | `npcsync.lua` | NPC looks (body, clothes, tints, hair and its colour, mouth and eyes, size and walk rate, staff badge) + AnimBP inputs, emotion, thought bubble and basket, matched by position; the cash a customer holds out made to replicate; on a guest it stops the guest's own AI Director and removes the NPCs that spawned |
 | `guestinput.lua` | Guest presses (RMB/LMB/E/V/B/K) replayed on the guest's pawn on the host; the till for guests (entry, glides, W/Space, the cash drawer, the register's screen and the change counted onto the counter mirrored); the guest's skin picker and its choice; each guest's tool; the guest's own placement preview in build mode (and its turns, action 10); the host's HUD after a replay; no replays while the end-of-day summary is up |

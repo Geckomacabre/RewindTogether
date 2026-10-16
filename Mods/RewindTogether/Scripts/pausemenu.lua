@@ -50,6 +50,7 @@ local BTN_CLICKED   = "/Game/VideoStore/core/widget/button/UX_Button_Base.UX_But
 local WIDGETS       = "/Script/UMG.Default__WidgetBlueprintLibrary"
 
 local LABEL         = "Back to the store"
+local CHAR_LABEL    = "Character"
 local OP_GUEST_MENU = "the pause menu on a guest"
 local OP_BUTTON     = "the Back to the store button"
 
@@ -95,8 +96,8 @@ local function hookAll(now)
             RegisterHook(BTN_CLICKED, function(ctx)
                 local button = ctx
                 pcall(function() button = ctx:get() end)
-                local menu = ours[addressOf(button)]
-                if menu and #clicked < 4 then clicked[#clicked + 1] = menu end
+                local entry = ours[addressOf(button)]
+                if entry and #clicked < 4 then clicked[#clicked + 1] = entry end
             end)
         end)
     end
@@ -139,12 +140,21 @@ local function addButton(menu)
         return false
     end
     pcall(function() button["Set Text"](button, FText(LABEL)) end)
+    -- "Character": the character screen (character.lua), above it.
+    local charButton = nil
+    pcall(function() charButton = lib:Create(menu, cls, UE.GetPlayerController()) end)
+    if UE.valid(charButton) then pcall(function() charButton["Set Text"](charButton, FText(CHAR_LABEL)) end) end
 
-    -- Resume, Options, [ours], Return to menu, the last-save line: the panel
-    -- can only append, so the two after ours come out and go back in.
+    -- Resume, Options, [Character], [Back to the store], Return to menu, the
+    -- last-save line: the panel can only append, so the two after ours come
+    -- out and go back in.
     pcall(function() box:RemoveChild(quit) end)
     if UE.valid(last) then pcall(function() box:RemoveChild(last) end) end
     local slot = nil
+    if UE.valid(charButton) then
+        pcall(function() slot = box:AddChild(charButton) end)
+        pad(slot, 20.0)
+    end
     pcall(function() slot = box:AddChild(button) end)
     pad(slot, 20.0)
     pcall(function() slot = box:AddChild(quit) end)
@@ -155,7 +165,9 @@ local function addButton(menu)
     end
 
     local a = addressOf(button)
-    if a then ours[a] = menu end
+    if a then ours[a] = { menu = menu, kind = "back" } end
+    local c = UE.valid(charButton) and addressOf(charButton) or nil
+    if c then ours[c] = { menu = menu, kind = "character" } end
     stats.buttons = stats.buttons + 1
     return true
 end
@@ -215,6 +227,9 @@ end
 --- Escape on a guest: what the pawn's own event does after its GameMode check.
 local function guestEscape()
     if not UE.IsClient() or not enabled() then return end
+    -- The character screen closes itself on Escape (character.lua).
+    local C = require("character")
+    if C.isOpen() or C.escapedRecently() then return end
     local pawn = UE.GetPawn()
     if not (UE.valid(pawn) and UE.ClassNameOf(pawn) == "Player_Character_C") then return end
     -- The game keeps the one it opened in the pawn's "UI ESC MENU"; ours is here.
@@ -268,12 +283,18 @@ function PauseMenu.tick(now)
     if #clicked > 0 then
         local batch = clicked
         clicked = {}
-        local said = PauseMenu.backToStore()
-        Log.info("back to the store (pause menu): %s", said)
-        for _, menu in ipairs(batch) do
-            if UE.valid(menu) then UE.TryCall(menu, "Close ESC") end
-            if guestMenu == menu then guestMenu = nil end
+        local back, character = false, false
+        for _, entry in ipairs(batch) do
+            if entry.kind == "character" then character = true else back = true end
+            if UE.valid(entry.menu) then UE.TryCall(entry.menu, "Close ESC") end
+            if guestMenu == entry.menu then guestMenu = nil end
         end
+        if back then
+            local said = PauseMenu.backToStore()
+            Log.info("back to the store (pause menu): %s", said)
+        end
+        -- Once the menu has finished closing (its Close ESC ends a tick later).
+        if character then require("character").chooseSoon() end
     end
 end
 

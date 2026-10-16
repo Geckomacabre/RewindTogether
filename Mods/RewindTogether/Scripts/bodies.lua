@@ -87,6 +87,12 @@ local placedRot = {}
 -- down inside its own pcall and reported as "no body was applied".
 local anim = {}
 local findSequencesFor
+-- Pawn address -> which way its body faces (see "Which way the body faces").
+-- Up here because holdPlacement, above that section, has to reach it.
+local facing = {}
+-- Full names of figures dressed for the character screen (charscreen.lua):
+-- not pawns, so the poll's clean-up would forget their hair otherwise.
+local figures = {}
 local lastPoll = 0
 local reported = false
 local noneSince = nil         -- when the last other player's pawn went (or none had come yet)
@@ -554,6 +560,8 @@ local function holdPlacement(pawn, key)
     local base = readVec(pawn, "BaseTranslationOffset")
     if not (base and near(base.Z, want.Z)) then
         setBaseMeshOffset(pawn, want, placedRot[key] or { Pitch = 0, Yaw = -90, Roll = 0 })
+        -- That put the body's yaw back to dress()'s: the turning writes its own again.
+        for _, st in pairs(facing) do if st.key == key then st.rel = nil end end
     end
 
     local got = readVec(comp, "RelativeLocation")
@@ -970,6 +978,7 @@ local LOOK_PREFER = { AI_WalkBy_Character_C = 1, AI_Client_Character_C = 1,
 local looks = {}        -- PlayerId -> the look the host gave that player
 local localLook = {}    -- pawn full name -> the look of the local NPC its body came from
 local wearing = {}      -- pawn full name -> the look it has on (a signature)
+local heights = {}      -- pawn full name -> its Character Scale (the walk's play rate needs it)
 local headComps = {}    -- pawn full name -> { h = path, f = path, a = path }: its hair etc.
 local usedDonor = {}    -- host: NPC name -> the PlayerId wearing its look
 local nextLookSend = 0
@@ -1010,6 +1019,21 @@ local function pickLook(pid)
     usedDonor[bestName] = pid
     return best
 end
+
+--- Host: this player has chosen how they look (character.lua) - theirs for
+--- the session, sent to everyone at once.
+function Bodies.chooseLook(pid, look, why)
+    if not (pid and type(look) == "table" and dressedLook(look)) then return false end
+    looks[pid] = look
+    for name, who in pairs(usedDonor) do if who == pid then usedDonor[name] = nil end end
+    nextLookSend = 0
+    Log.info("bodies: player %d looks like a %s to everyone (%s)", pid,
+             (look.m or ""):match("([^/%.]+)$") or "town character", why or "chosen")
+    return true
+end
+
+--- The look this machine has for a player, or nil.
+function Bodies.lookOf(pid) return looks[pid] end
 
 local function assignLooks()
     for _, ps in ipairs(UE.findAll("PlayerState") or {}) do
@@ -1058,8 +1082,18 @@ end
 local function signature(look)
     local parts = { look.m or "" }
     for i = 0, 7 do parts[#parts + 1] = look["s" .. i] or "" end
-    for _, k in ipairs({ "h", "hm", "f", "fm", "a", "am", "e", "eb" }) do parts[#parts + 1] = look[k] or "" end
+    for _, k in ipairs({ "h", "hm", "f", "fm", "a", "am", "e", "eb", "cs" }) do parts[#parts + 1] = look[k] or "" end
     return table.concat(parts, "\n")
+end
+
+--- Their height: the look's Character Scale, on the body mesh the way the
+--- game sizes a town character (npcsync.lua's applySize). The mesh's origin
+--- is at its feet, so they stay on the floor.
+local function wearHeight(mesh, key, look)
+    local cs = tonumber(look.cs)
+    if not (cs and cs > 0.5 and cs < 1.5) then cs = 1.0 end
+    pcall(function() mesh:SetRelativeScale3D({ X = cs, Y = cs, Z = cs }) end)
+    heights[key] = cs
 end
 
 --- This pawn's own hair / beard / glasses component, found again by path
@@ -1119,12 +1153,47 @@ local function wearLook(pawn, key)
     NpcLook.dressBody(mesh, look)
     NpcLook.face(mesh, 0)
     wearHead(pawn, key, mesh, look)
+    wearHeight(mesh, key, look)
     wearing[key] = sig
     lookStats.worn = lookStats.worn + 1
     Log.info("bodies: %s dressed in %s", UE.ClassNameOf(pawn),
              (pid and looks[pid]) and ("the look the host gave player " .. pid)
              or "the look of the NPC its body came from")
 end
+
+--- Dress any actor's skeletal mesh in a look the way a body is dressed: the
+--- body mesh, its materials, a neutral face, hair, beard and glasses
+--- (character.lua's figure in the character select). Returns whether the
+--- body mesh is on.
+function Bodies.dressFigure(actor, mesh, look)
+    if not (UE.alive(actor) and UE.alive(mesh) and type(look) == "table") then return false end
+    local body = NpcLook.asset(look.m)
+    if not body or not pcall(function() mesh:SetSkinnedAssetAndUpdate(body, true) end) then return false end
+    NpcLook.dressBody(mesh, look)
+    NpcLook.face(mesh, 0)
+    local key = nil
+    pcall(function() key = actor:GetFullName() end)
+    if key then
+        figures[key] = true
+        wearHead(actor, key, mesh, look)
+    end
+    return true
+end
+
+--- The character screen's figure is gone: forget its hair and the rest.
+function Bodies.dropFigure(actor)
+    local key = nil
+    pcall(function() key = actor:GetFullName() end)
+    if not key then return end
+    figures[key] = nil
+    headComps[key] = nil
+end
+
+--- Whether a look is one worth wearing (a dressed top: see dressedLook).
+function Bodies.isLook(look) return dressedLook(look) end
+
+--- Two looks the same? (the parts that show)
+function Bodies.sameLook(a, b) return type(a) == "table" and type(b) == "table" and signature(a) == signature(b) end
 
 --------------------------------------------------------------------------
 -- What their body does
@@ -1190,27 +1259,287 @@ local function holdInHands(pawn, key)
     Log.debug("bodies: %d carrying socket(s) moved onto %s's hands", moved, UE.ClassNameOf(pawn))
 end
 
+--[[
+    REPORTED (16 Oct 2026, a screenshot from the guest): what the host carried
+    floated beside the host - the stack low and in front, the tape in hand off
+    the hand. MEASURED on the guest: both sockets were on the hand bones, but
+    each item hangs from its socket at the offset the first-person pickup gave
+    it (the stack's tape -68,-21,-2, the hand's -68,21,8): 70 cm from the
+    hand. That offset is the item's replicated attachment - changed on the
+    host it would also move the guest's own first-person view of its own
+    things - so the SOCKET goes the other way instead: minus its first item's
+    offset, which puts the item on the hand. No item: the hand itself.
+]]
 local function keepInHands(pawn)
     for _, pair in ipairs(HAND_SOCKETS) do
         local socket = UE.TryGet(pawn, pair[1])
-        local rel = UE.valid(socket) and readVec(socket, "RelativeLocation") or nil
-        if rel and (math.abs(rel.X) + math.abs(rel.Y) + math.abs(rel.Z)) > 1.0 then
-            setRelLocation(socket, { X = 0.0, Y = 0.0, Z = 0.0 })
+        if UE.valid(socket) then
+            local want = { X = 0.0, Y = 0.0, Z = 0.0 }
+            local item = nil
+            pcall(function() item = socket:GetChildComponent(0) end)
+            local off = UE.valid(item) and readVec(item, "RelativeLocation") or nil
+            if off then want = { X = -off.X, Y = -off.Y, Z = -off.Z } end
+            local rel = readVec(socket, "RelativeLocation")
+            if rel and (math.abs(rel.X - want.X) + math.abs(rel.Y - want.Y) + math.abs(rel.Z - want.Z)) > 1.0 then
+                setRelLocation(socket, want)
+            end
         end
     end
 end
 
-local function feedAnimation(pawn)
+local function addressOf(o)
+    local a = nil
+    pcall(function() a = o:GetAddress() end)
+    return a
+end
+
+local function feedAnimation(pawn, key)
+    local speed = speedOf(pawn) or 0.0
     local mesh = UE.TryGet(pawn, "Mesh")
-    if not UE.alive(mesh) then return end
+    if not UE.alive(mesh) then return speed end
     local inst = nil
     pcall(function() inst = mesh:GetAnimInstance() end)
-    if not UE.valid(inst) or UE.ClassNameOf(inst) ~= "AnimBP_Base_C" then return end
-    local speed = speedOf(pawn) or 0.0
+    if not UE.valid(inst) or UE.ClassNameOf(inst) ~= "AnimBP_Base_C" then return speed end
     UE.TrySet(inst, "Speed", speed)
+    -- A shorter body's legs take shorter steps: the town's own rate is its
+    -- walk speed over its Character Scale.
+    local stride = WALK_CYCLE_SPEED * ((key and heights[key]) or 1.0)
     UE.TrySet(inst, "Scale Character Play Rate",
-              speed > 2 and math.max(0.5, math.min(2.5, speed / WALK_CYCLE_SPEED)) or 1.0)
+              speed > 2 and math.max(0.5, math.min(2.5, speed / stride)) or 1.0)
     UE.TrySet(inst, "Is Holding Something", carrying(pawn))
+    -- Standing still is 0.5, not the 0 nobody writes (see "Which way the
+    -- body faces"); a body the turning is turning gets its value per frame.
+    local st = facing[addressOf(pawn) or 0]
+    if not (st and st.turning) then UE.TrySet(inst, "Rotation Delta Z Normalize", 0.5) end
+    return speed
+end
+
+--------------------------------------------------------------------------
+-- Which way the body faces
+--------------------------------------------------------------------------
+--[[
+    REPORTED (16 Oct 2026, with a friend and in the two-copy tests): "why do
+    the player pawns move in circles". MEASURED: a remote player's whole body
+    faced exactly where that player looked - the guest's body went to yaw -16
+    the moment its camera did. A first-person pawn's rotation IS its view
+    (the controller's yaw), and that is what replicates. People look around
+    all the time, so on everybody else's screen the bodies spun on the spot -
+    and at a machine, where the view swings from part to part, round and
+    round.
+
+    The other half of it was in the legs. MEASURED on the guest (a recording
+    from the user, then the host's body sampled): standing still, its hips
+    went round a loop about 30 cm across every 1.6 s, feet stepping - a
+    turning-on-the-spot cycle. AnimBP_Base adds its "Blend1D_Rotate" (the
+    town's Anim_CHA_Rotate_Left/Right steps) at full weight whenever the
+    character stands (ApplyMeshSpaceAdditive, alpha 1 - Speed/15), picked by
+    "Rotation Delta Z Normalize": an NPC's update makes that (still to turn +
+    rate/2) / rate, so 0.5 standing still. On a player nothing writes it and
+    it sits at 0 - turning round, for ever. Measured: hips moved 21 x 16 cm
+    at 0, 17 x 12 at 1, 0 x 1 at 0.5. So it is 0.5, and while the body turns
+    on the spot it is the NPC's own formula, which steps the feet round with
+    the turn.
+
+    So the body turns like a person's. Standing, the head follows the view -
+    the town NPCs' own look-at node on the head bone, clamped at 60 degrees
+    (AnimBP_Base: "Look At Pos", world space, and "Look at Player Alpha",
+    which its own update never writes on a player: it stops at the AI cast,
+    @4694) - and the body stays put until the view is more than TURN_AFTER
+    away, then turns on the spot to catch up. Walking, the body turns with
+    the view.
+
+    Every frame, not on the mod's 10 Hz tick: a body counter-turned ten
+    times a second shakes while its player turns. A hook on the pawn's own
+    ReceiveTick does it, and writes only properties - the character's
+    BaseRotationOffset, which network smoothing puts the mesh at on every
+    update (see setBaseMeshOffset), and the mesh's RelativeRotation, which
+    the capsule's next move carries to the screen. An engine call with a
+    struct argument costs a little memory in UE4SS 3.0.1 (ue.lua), so the one
+    such call here, putting the mesh straight, runs only on frames where
+    nothing else would: the body still turning after the view has stopped.
+    The engine's own rotation smoothing on these pawns is set to zero: it
+    eases the mesh toward each new view yaw, which is the very turn being
+    taken out, and would shake the body by it.
+]]
+local TURN_AFTER   = 60.0     -- degrees from the view before a standing body turns (the head covers 60)
+local TURN_DONE    = 3.0      -- degrees: close enough, the turn ends
+local TURN_RATE    = 300.0    -- degrees a second, turning on the spot
+local WALK_RATE    = 720.0    -- degrees a second, walking
+local MOVING_ABOVE = 30.0     -- cm/s
+local EYE_HEIGHT   = 64.0     -- cm above the capsule's centre: the first-person camera
+local LOOK_AHEAD   = 300.0    -- cm along the view, where the head looks
+local STEP_SPAN    = 240.0    -- degrees still to turn for the full stepping turn (an NPC's: its turn rate)
+
+-- facing (declared at the top): pawn address -> { live, speed, base (the
+-- mesh yaw dress() put), body (world yaw), turning, at, view, rel, settle,
+-- key }. By address because it is read every frame, where a GetFullName would
+-- be too dear; the 10 Hz tick drops the ones that are gone.
+local myAddress = nil
+local turnHooked, turnHookNext = nil, 0     -- the hooked function's address
+
+local function wrap(a) return (a + 180.0) % 360.0 - 180.0 end
+
+--- The head looks where its player looks: a point along the view. And the
+--- legs step round while the body turns on the spot (turn: degrees still to
+--- go, or nil).
+local function aimHead(pawn, at, yaw, turn)
+    local mesh = UE.TryGet(pawn, "Mesh")
+    local inst = nil
+    if UE.valid(mesh) then pcall(function() inst = mesh:GetAnimInstance() end) end
+    if not UE.valid(inst) then return end
+    UE.TrySet(inst, "Rotation Delta Z Normalize",
+              turn and math.max(0.0, math.min(1.0, 0.5 + turn / STEP_SPAN)) or 0.5)
+    local b = tonumber(UE.TryGet(pawn, "RemoteViewPitch")) or 0
+    local pitch = b * 360.0 / 255.0
+    if pitch > 180.0 then pitch = pitch - 360.0 end
+    local p, y = math.rad(pitch), math.rad(yaw)
+    UE.TrySet(inst, "Look At Pos", {
+        X = at.X + math.cos(p) * math.cos(y) * LOOK_AHEAD,
+        Y = at.Y + math.cos(p) * math.sin(y) * LOOK_AHEAD,
+        Z = at.Z + EYE_HEIGHT + math.sin(p) * LOOK_AHEAD })
+end
+
+--- One remote pawn, one frame (the ReceiveTick hook).
+local function turnFrame(pawn)
+    local st = facing[addressOf(pawn) or 0]
+    if not (st and st.live) then return end
+    local root = UE.TryGet(pawn, "RootComponent")
+    if not UE.valid(root) then return end
+    local r = readRot(root, "RelativeRotation")
+    local at = readVec(root, "RelativeLocation")
+    if not (r and at) then return end
+    local view = r.Yaw
+
+    local now = os.clock()
+    local dt = math.min(0.1, math.max(0.0, now - (st.at or now)))
+    st.at = now
+    st.body = st.body or view
+
+    local diff = wrap(view - st.body)
+    local moving = (st.speed or 0) > MOVING_ABOVE
+    if moving or math.abs(diff) > TURN_AFTER then st.turning = true end
+    if st.turning then
+        local stepBy = (moving and WALK_RATE or TURN_RATE) * dt
+        if math.abs(diff) <= stepBy then
+            st.body = view
+        else
+            st.body = wrap(st.body + (diff > 0 and stepBy or -stepBy))
+        end
+        if not moving and math.abs(wrap(view - st.body)) < TURN_DONE then st.turning = false end
+    end
+
+    local want = wrap(st.base + wrap(st.body - view))
+    local viewMoved = st.view == nil or math.abs(wrap(view - st.view)) > 0.01
+    st.view = view
+    if st.rel == nil or math.abs(wrap(want - st.rel)) > 0.2 then
+        st.rel = want
+        local rot = { Pitch = 0.0, Yaw = want, Roll = 0.0 }
+        UE.TrySet(pawn, "BaseRotationOffset", rotatorToQuat(rot))
+        local mesh = UE.TryGet(pawn, "Mesh")
+        if UE.valid(mesh) then
+            UE.TrySet(mesh, "RelativeRotation", UE.rotArg(rot))
+            -- The capsule did not move this frame, so nothing would carry
+            -- the new rotation to the screen.
+            if not viewMoved then
+                pcall(UE.withHit, function(hit) mesh:K2_SetRelativeRotation(UE.rotArg(rot), false, hit, false) end)
+            else
+                st.settle = true
+            end
+        end
+    elseif st.settle and not viewMoved then
+        -- The view has stopped: put the mesh exactly where it belongs once,
+        -- in case smoothing placed it before this frame's offset was written.
+        st.settle = false
+        local mesh = UE.TryGet(pawn, "Mesh")
+        if UE.valid(mesh) then
+            pcall(UE.withHit, function(hit)
+                mesh:K2_SetRelativeRotation(UE.rotArg({ Pitch = 0.0, Yaw = st.rel, Roll = 0.0 }), false, hit, false)
+            end)
+        end
+    end
+    aimHead(pawn, at, view, st.turning and wrap(view - st.body) or nil)
+end
+
+-- Not Safety.guard per frame: it flushes the crash record to disk twice a
+-- call. Only property reads and writes run here, and the bodies' own switch
+-- (RISKY_OP) is honoured; repeated Lua errors switch the turning off.
+local turnErrors, turnOff, turnLastError = 0, false, nil
+
+-- MEASURED (host): a guest's pawn never runs its ReceiveTick there -
+-- guestinput.lua stops it (its look-at trace would act on the host's
+-- screen) - while on a guest the host's pawn ticks every frame. So on the
+-- host the host's own pawn's tick turns every guest's body, found through
+-- the controllers (engine calls that take and return only objects and
+-- numbers: nothing to leak).
+local othersFromMine = false
+
+local function turnOne(pawn)
+    local ok, err = pcall(turnFrame, pawn)
+    if not ok then
+        turnErrors, turnLastError = turnErrors + 1, tostring(err)
+        if turnErrors >= 30 then
+            turnOff = true
+            Log.warn("bodies: natural turning switched off after repeated errors: %s", tostring(err))
+        end
+    end
+end
+
+local TURN_HOOK = "/Game/VideoStore/core/pawn/Player_Character.Player_Character_C:ReceiveTick"
+
+--- Hooked again whenever the function itself is a new object (a reloaded
+--- Blueprint class takes its hooks with it), as mirror.lua does.
+local function hookTurning(now)
+    if now < turnHookNext then return end
+    turnHookNext = now + 5.0
+    local f, addr = StaticFindObject(TURN_HOOK), nil
+    if UE.valid(f) then addr = addressOf(f) end
+    if not addr or addr == turnHooked then return end
+    local ok = pcall(function()
+        RegisterHook(TURN_HOOK, function(ctx)
+            if turnOff or next(facing) == nil then return end
+            local pawn = nil
+            pcall(function() pawn = ctx:get() end)
+            if not pawn then return end
+            if addressOf(pawn) ~= myAddress then return turnOne(pawn) end
+            if not othersFromMine then return end
+            for _, pc in ipairs(UE.GetAllPlayerControllers()) do
+                local other = nil
+                pcall(function() other = pc.Pawn end)
+                local addr = UE.valid(other) and addressOf(other) or nil
+                if addr and addr ~= myAddress and facing[addr] then turnOne(other) end
+            end
+        end)
+    end)
+    if ok then
+        turnHooked = addr
+        Log.debug("bodies: turning hooked to the pawns' own tick")
+    end
+end
+
+--- 10 Hz, per remote pawn: what the frame hook needs, read here where it is
+--- cheap enough.
+local function turnTick(pawn, key, speed)
+    local addr = addressOf(pawn)
+    if not addr then return end
+    local st = facing[addr]
+    if not st then
+        st = {}
+        facing[addr] = st
+        -- No easing toward the view's yaw (see above); location smoothing stays.
+        local move = UE.TryGet(pawn, "CharacterMovement")
+        if UE.alive(move) then
+            UE.TrySet(move, "NetworkSimulatedSmoothRotationTime", 0.0)
+            UE.TrySet(move, "ListenServerNetworkSimulatedSmoothRotationTime", 0.0)
+        end
+    end
+    st.live = dressed[key] ~= nil
+    st.speed = speed
+    st.base = (placedRot[key] and placedRot[key].Yaw) or -90.0
+    st.key = key
+    local mesh = UE.TryGet(pawn, "Mesh")
+    local inst = nil
+    if UE.valid(mesh) then pcall(function() inst = mesh:GetAnimInstance() end) end
+    if UE.valid(inst) then UE.TrySet(inst, "Look at Player Alpha", st.live and 1.0 or 0.0) end
 end
 
 --------------------------------------------------------------------------
@@ -1229,15 +1558,29 @@ function Bodies.tick(now)
     -- would be inside our camera. Next tick.
     if not UE.alive(mine) then return end
 
-    -- The animation blueprint's own inputs, and the carried things in the
-    -- hands, every tick (feedAnimation, keepInHands).
+    -- The animation blueprint's own inputs, the carried things in the hands
+    -- and which way the body faces, every tick (feedAnimation, keepInHands,
+    -- turnTick).
+    myAddress = addressOf(mine)
+    local turning = cfg.NaturalTurning ~= false and not Safety.isBlocked(RISKY_OP)
+    if not turning then facing = {} end
+    othersFromMine = UE.IsServer()
+    if turning then hookTurning(now) end
+    local seen = {}
     for _, p in ipairs(UE.findAll("Player_Character_C") or {}) do
         if UE.alive(p) and not UE.sameObject(p, mine) then
-            pcall(feedAnimation, p)
             local k = nil
             pcall(function() k = p:GetFullName() end)
+            local _, speed = pcall(feedAnimation, p, k)
             if k and handsOn[k] then pcall(keepInHands, p) end
+            if k and turning then
+                pcall(turnTick, p, k, tonumber(speed) or 0.0)
+                seen[addressOf(p) or 0] = true
+            end
         end
+    end
+    for addr in pairs(facing) do
+        if not seen[addr] then facing[addr] = nil end
     end
 
     -- Animation runs every tick. Dressing is the expensive part and stays on
@@ -1309,7 +1652,7 @@ function Bodies.tick(now)
     -- a new actor under a new name, and is dressed again as one.
     for _, book in ipairs({ dressed, placed, placedRot, anim, wearing, localLook, headComps, handsOn }) do
         for key in pairs(book) do
-            if not present[key] then book[key] = nil end
+            if not present[key] and not figures[key] then book[key] = nil end
         end
     end
 
@@ -1497,6 +1840,7 @@ end
 function Bodies.reset()
     Bodies.retry()
     looks, usedDonor, headComps, nextLookSend = {}, {}, {}, 0
+    facing, myAddress, heights = {}, nil, {}
 end
 
 function Bodies.init(config)
@@ -1512,6 +1856,11 @@ function Bodies.lookReport()
 end
 
 --- Tests only: the per-pawn bookkeeping, keyed by pawn name.
+--- Which way the bodies face, for rt.bodies and the tests.
+function Bodies._turning()
+    return { facing = facing, errors = turnErrors, lastError = turnLastError, off = turnOff, hooked = turnHooked }
+end
+
 function Bodies._books()
     return { dressed = dressed, placed = placed, anim = anim }
 end

@@ -88,7 +88,31 @@ local ACTIONS = {
     -- Not a key: the office computer (computer.lua) - "send me its pages", or
     -- an order. The three location floats carry what and which.
     [13] = { label = "the office computer", special = "computer" },
+    -- Not keys: a guest at one of the store's machines (machines.lua) - sat
+    -- down or got up (the machine's place; Pitch 1 / 0), the left button let
+    -- go, and the camera while it is held (a drag).
+    [14] = { label = "sit at a machine", special = "machine" },
+    [15] = { label = "let go of the left button", special = "release" },
+    [16] = { label = "drag", special = "drag" },
+    -- Not keys: the concession machines, worked on the guest's own screen
+    -- (concessions.lua) - the popcorn level as the guest's game has it (Yaw =
+    -- level x 100), and "my game gave me a product" (Yaw = which and how
+    -- full, Pitch = its flavour).
+    [17] = { label = "the popcorn level", special = "concFill" },
+    [18] = { label = "a product made", special = "concGive" },
+    -- Not keys: the store's screen machines (uimachines.lua) - the ad the
+    -- guest put on the sidewalk sign (X), a room bought on the expansion map
+    -- (X = its ID) and a catalogue order (X = product or station, Y = which,
+    -- Z = the price in pennies); the last two numbered in Pitch.
+    [19] = { label = "the sidewalk sign's ad", special = "sidewalkAd" },
+    [20] = { label = "a room on the expansion map", special = "expansionRoom" },
+    [21] = { label = "a catalogue order", special = "catalogueOrder" },
 }
+
+-- Machines whose clicks stay on the guest's screen although they are worked
+-- by looking around them: the guest's own game runs them, the host makes the
+-- results real (concessions.lua says why).
+local LOCAL_PLAY = { PopcornMachine_C = true, SlushMachine_C = true, CottonCandyMachine_C = true }
 
 local cfg = nil
 local stats = { sent = 0, replayed = 0, failed = 0, redirected = 0, toolFixes = 0 }
@@ -197,8 +221,11 @@ local function onPress(code)
     -- working its screen, here. MEASURED: each click on the office computer's
     -- tabs also went to the host as "primary", where the guest's character is
     -- not at the machine and would have used whatever the camera faced.
-    -- (The accessor: machineIn is declared further down this file.)
-    if GuestInput.inMachine() then return end
+    -- (The accessor: machineIn is declared further down this file.) Only a
+    -- machine worked with the mouse pointer, though: at the return desk, the
+    -- popcorn machine and the rest every click is the pawn's own trace, and
+    -- those machines' contents are on the host (machines.lua).
+    if GuestInput.atScreenMachine() then return end
     local pc = UE.GetPlayerController()
     if not UE.alive(pc) or not UE.valid(UE.GetPawn()) then return end
     local cm = UE.TryGet(pc, "PlayerCameraManager")
@@ -222,10 +249,13 @@ end
 function GuestInput.bindKeys()
     for code, a in pairs(ACTIONS) do
         if a.key then
+            -- Letting go of the left button ends a drag at a machine.
+            local onUp = nil
+            if code == 1 then onUp = function() require("machines").released() end end
             Input.bind(a.key, "guest " .. a.label, function()
                 if a.onlyAtTill and not GuestInput.atTill() then return end
                 onPress(code)
-            end)
+            end, onUp)
         end
     end
 end
@@ -376,6 +406,7 @@ function GuestInput.tickHost()
     end
     sendDrawer(now)
     sendBill(now)
+    Log.guard("machines (host)", require("machines").tickHost, now)
 end
 
 --- Guest: the host says which tool this player's pawn holds there. Not in
@@ -427,18 +458,50 @@ local function copyRot(r) return UE.rotArg(r) end
 --- standee, the money went up $10.00, and the host's HUD kept the old total
 --- while the guest's showed the new one. So afterwards the host's widget is
 --- given what changed, through the same two setters the GameMode calls.
+---
+--- Hidden, not gone. Change Money with no widget writes the new total and
+--- then returns WITHOUT "Have enough money" (@430 -> @810 prints "UI Game
+--- interface is nota valid" and leaves it false), so a caller that checks it
+--- charges and then gives up. MEASURED (16 Oct 2026): a guest stocking the
+--- snack shelf paid $0.50 a snack and most never went on the shelf - each
+--- was left at the world origin. So for the length of the call the GameMode
+--- has a widget of its own: a second copy of the HUD that is never on
+--- screen (made once, never constructed), which takes the calls and shows
+--- nothing.
+local standInPath = nil
+local function standInHud(hostHud)
+    local w = standInPath and UE.findObject(standInPath) or nil
+    if UE.valid(w) then return w end
+    local lib, cls = StaticFindObject("/Script/UMG.Default__WidgetBlueprintLibrary"), nil
+    pcall(function() cls = hostHud:GetClass() end)
+    if not (UE.valid(lib) and UE.valid(cls)) then return nil end
+    pcall(function() w = lib:Create(UE.GetWorld(), cls, nil) end)
+    if not UE.valid(w) then return nil end
+    standInPath = UE.pathOf(w)
+    return w
+end
+
 local function asGuest(pc, fn)
     local gm = UE.GetGameMode()
-    local hostHud, money0, xp0 = nil, nil, nil
+    local hostHud, standIn, money0, xp0 = nil, nil, nil, nil
     if UE.valid(gm) then
         hostHud = UE.TryGet(gm, "UI Game Interface")
-        if UE.valid(hostHud) then UE.TrySet(gm, "UI Game Interface", nil) end
+        standIn = UE.valid(hostHud) and standInHud(hostHud) or nil
+        -- No stand-in (it could not be made): the host's own widget stays,
+        -- so the game's money checks hold - a guest's notice may show here.
+        if UE.valid(standIn) then UE.TrySet(gm, "UI Game Interface", standIn) end
         money0, xp0 = UE.TryGet(gm, "Money"), UE.TryGet(gm, "Experience")
     end
 
     local ok, swaps, err = Native.asPlayer(pc, fn)
 
-    if UE.valid(gm) and UE.valid(hostHud) then
+    if UE.valid(standIn) then
+        -- Its "+$2.00" and "+10 XP" pop-ups go away by their own animation,
+        -- which a widget never on screen never plays.
+        pcall(function() standIn.Overlay_Money:ClearChildren() end)
+        pcall(function() standIn.Overlay_XP:ClearChildren() end)
+    end
+    if UE.valid(gm) and UE.valid(hostHud) and UE.valid(standIn) then
         UE.TrySet(gm, "UI Game Interface", hostHud)
         local money1, xp1 = UE.TryGet(gm, "Money"), UE.TryGet(gm, "Experience")
         if type(money1) == "number" and type(money0) == "number" and money1 ~= money0 then
@@ -610,6 +673,61 @@ local function backToStore(pc, pawn)
     if placed then stats.replayed = stats.replayed + 1 end
 end
 
+--- Host: every guest beside the host, the same way, facing where the host
+--- faces - each morning (dayend.lua). Returns how many were moved.
+function GuestInput.everyoneToHost(why)
+    if not UE.IsServer() then return 0 end
+    local host = UE.GetPawn()
+    local face = nil
+    pcall(function() face = UE.rot(host:K2_GetActorRotation()) end)
+    local n = 0
+    for _, pc in ipairs(UE.GetAllPlayerControllers()) do
+        if UE.alive(pc) and not UE.IsLocalController(pc) then
+            local pawn = UE.TryGet(pc, "Pawn")
+            if UE.alive(pawn) and UE.ClassNameOf(pawn) == "Player_Character_C" then
+                if tillUser == pc:GetFullName() then freeTill() end
+                walkAgain(pawn)
+                if require("spawn").placeGuest(pc, pawn, n, why) then
+                    n = n + 1
+                    -- The guest's own view: its controller's rotation is the
+                    -- guest's, so it is told (a client call).
+                    if face then
+                        pcall(function()
+                            pc:ClientSetRotation(UE.rotArg({ Pitch = 0.0, Yaw = face.Yaw, Roll = 0.0 }), true)
+                        end)
+                    end
+                end
+            end
+        end
+    end
+    return n
+end
+
+--[[
+    A SCREEN MACHINE IS THE GUEST'S OWN GAME'S TO OPEN. The catalogue, the
+    sidewalk sign, the store's name, the repair desk, the staff book... are
+    worked with the mouse on the player's own screen (machines.lua): a
+    guest's game sits down at its own copy and draws it there
+    (uimachines.lua, computer.lua). The click that sat it down also comes
+    here, and most of them refuse a remote player ("Can Player use the
+    machine?" reads player 0's walking mapping, which only a local controller
+    sets) - but not all: the repair desk's own Interaction never asks
+    (RepairStation @0-@1600), nor do the sidewalk sign's and the store name's.
+    Replayed, they would sit the guest down at the HOST's copy, and the glide
+    that follows ticks outside the guest window - on GetPlayerPawn(0), the
+    host, who is carried across the store into a screen that is not theirs.
+    So a click on one is not replayed. The console rental mat is worked by
+    clicks in the world, not on a screen (it never sits anyone down), and the
+    till is the till's.
+]]
+local CLICK_THROUGH = { ConsoleRental_Mat_C = true, MembershipMachine_C = true, CheckOut_C = true }
+local screenSkipped = 0
+
+local function screenMachine(o)
+    return UE.alive(o) and UE.TryGet(o, "Hide Cursor Interface while Using") == true
+       and not CLICK_THROUGH[UE.ClassNameOf(o) or ""]
+end
+
 local function replay(pc, code, loc, rot)
     local action = ACTIONS[code]
     if not action then return end
@@ -636,6 +754,17 @@ local function replay(pc, code, loc, rot)
             stats.replayed = stats.replayed + 1
         end
         return
+    end
+    -- At a machine (machines.lua): sitting down, getting up, a drag. Getting
+    -- up is answered whatever the time of day.
+    if action.special == "machine" or action.special == "release" or action.special == "drag" then
+        return require("machines").onGuest(pc, pawn, action.special, loc, rot)
+    end
+    if action.special == "concFill" or action.special == "concGive" then
+        return require("concessions").onGuest(pc, pawn, action.special, loc, rot)
+    end
+    if action.special == "sidewalkAd" or action.special == "expansionRoom" or action.special == "catalogueOrder" then
+        return require("uimachines").onGuest(pc, pawn, action.special, loc, rot)
     end
     if dayIsOver() then
         Log.debug("ignored a guest's %s: the day is over on the host", action.label)
@@ -685,16 +814,32 @@ local function replay(pc, code, loc, rot)
     end
     pcall(function() pc:SetControlRotation(rot) end)
 
+    local skipped = nil
     local ok, swaps, err = asGuest(pc, function()
         pawn["Look At Test"](pawn)
+        local at = UE.TryGet(pawn, "ref Object Look At")
+        if (code == 1 or code == 2) and screenMachine(at) then
+            skipped = UE.ClassNameOf(at)
+            pcall(function() pawn["Trace from Camera Stop looking At"](pawn, true, true) end)
+            return
+        end
+        -- A drag starting at a machine: its cursor heard the button too
+        -- (machines.lua). Before the pawn, as the input stack orders them.
+        if code == 1 then require("machines").pressed(pc, pawn) end
         pawn[action.event](pawn, {}, 0.0, 0.0, nil)
         -- Do not leave an outline on the host's screen for what the guest
         -- was looking at.
         pcall(function() pawn["Trace from Camera Stop looking At"](pawn, true, true) end)
     end)
 
+    if skipped then
+        screenSkipped = screenSkipped + 1
+        if screenSkipped == 1 then
+            Log.info("guest actions: a click on the %s stays on the guest's own screen", skipped)
+        end
+    end
     -- The register, while nobody is at it (see the till, above).
-    if ok and (code == 1 or code == 2) and tillUser == nil then
+    if ok and not skipped and (code == 1 or code == 2) and tillUser == nil then
         local machine = tillMachine()
         if machine and UE.TryGet(machine, "Player In Checkout Mode") == true then
             -- The click entered checkout mode itself: a product on the
@@ -1163,7 +1308,14 @@ local function tickMachines()
     end
     for _, m in ipairs(UE.findAll(MACHINE) or {}) do
         if UE.TryGet(m, "In Machine Mode") == true then
-            machineIn = { obj = m, spot = exitSpotOf(m), name = UE.ClassNameOf(m) or MACHINE }
+            local place = nil
+            pcall(function() place = UE.vec(m:K2_GetActorLocation()) end)
+            machineIn = { obj = m, spot = exitSpotOf(m), name = UE.ClassNameOf(m) or MACHINE, at = place,
+                          -- Worked with the mouse pointer (its UI is on this screen),
+                          -- or by looking around it (machines.lua)?
+                          pointer = UE.TryGet(m, "Hide Cursor Interface while Using") == true,
+                          -- ...or worked on this screen, its results sent (concessions.lua)?
+                          localPlay = LOCAL_PLAY[UE.ClassNameOf(m) or ""] == true }
             Log.debug("using %s", machineIn.name)
             return
         end
@@ -1172,6 +1324,12 @@ end
 
 --- Is this guest's own game using a machine (the computer, the catalogue...)?
 function GuestInput.inMachine() return machineIn ~= nil end
+--- ...one whose clicks are on this screen's UI (the computer, the catalogue)?
+function GuestInput.atScreenMachine()
+    return machineIn ~= nil and (machineIn.pointer == true or machineIn.localPlay == true)
+end
+--- The machine this guest's game sits at: { name, at = its place, pointer }, or nil.
+function GuestInput.machine() return machineIn end
 --- The class of the machine this guest sits at ("ComputerScreen_C"), or nil.
 function GuestInput.machineClass() return machineIn and machineIn.name or nil end
 
@@ -1549,6 +1707,9 @@ function GuestInput.tickGuest()
     if m then fixTillExit(m) end
     -- Every other machine, the same way (above).
     tickMachines()
+    -- ...and the host told about it, when its contents are there (machines.lua).
+    Log.guard("machines (guest)", require("machines").tickGuest, os.clock())
+    Log.guard("concessions (guest)", require("concessions").tickGuest, os.clock())
 
     hookSkinPicker(os.clock())
     if #picked > 0 then
@@ -1565,11 +1726,15 @@ end
 
 function GuestInput.stats() return stats end
 
+-- For machines.lua: the till's ways of running something as a guest.
+GuestInput.asGuest, GuestInput.settleGlide, GuestInput.clearHostHints = asGuest, settleGlide, clearHostHints
+
 -- For the dev bridge only: a press exactly as the key poll makes it.
 GuestInput._onPress = onPress
 GuestInput._tillBurst = function() tillBurstUntil = os.clock() + TILL_BURST end
 
 function GuestInput.reset()
+    require("machines").reset()
     tickStopped = {}
     toolSent = {}
     announced = false

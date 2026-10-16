@@ -1,5 +1,5 @@
 =============================================================
-  REWIND TOGETHER  -  play Retro Rewind together   (v1.7.5)
+  REWIND TOGETHER  -  play Retro Rewind together   (v1.8.0)
   The simple guide. Read your part: HOST or GUEST.
 =============================================================
 
@@ -100,8 +100,19 @@ PLAYING TOGETHER
   page. It is the store's money, and the tapes arrive at the
   delivery spot for everyone.
 
-  Every player looks like one of the town's characters, the
-  same on every screen. It is picked again each session.
+  Guests can also use the catalogue (shelves, equipment,
+  decorations and the counter stations), the store expansion
+  map, the sidewalk sign, the store's name sign, the snack
+  shelves and the popcorn, slushie and cotton candy machines.
+
+  YOUR CHARACTER: the first time you play, the character
+  screen opens by itself. Pick one of the store's regulars, or
+  make your own: body, skin, hair and its colour, beard,
+  glasses, top, bottom and shoes with their colours, and
+  height. RANDOM makes a new one, DONE keeps it, Esc or CANCEL
+  leaves it as it was. Change it any time with Esc >
+  "Character", or F4. The others see you that way, in every
+  game.
 
   The HOST decides when the day ends. Guests see the day's
   summary too and carry on into the next day.

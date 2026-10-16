@@ -169,9 +169,51 @@ local function hostBanner()
     return day, season
 end
 
+--[[
+    REPORTED (16 Oct 2026): from day 2 on, the guest woke up in the store
+    instead of outside with the host. The GameMode's new morning ("Create a
+    new day" @29557, after the summary's closing animation and a fade) puts
+    player 0 - the host - at the Actor Gatherer's "PlayerStart Game Zone"
+    and turns their view; nobody else. So once the host is standing there,
+    every guest is put beside them, facing the same way (guestinput.lua
+    everyoneToHost, the move "Back to the store" makes).
+]]
+local MORNING_WAIT = 20.0      -- seconds after the summary closes to see the host arrive
+local MORNING_NEAR = 300.0     -- cm from the start zone: the host is there
+local morningUntil = nil
+
+local function startZone()
+    local gm = UE.GetGameMode()
+    local gather = UE.valid(gm) and UE.TryGet(gm, "Actor Gatherer") or nil
+    local zone = UE.valid(gather) and UE.TryGet(gather, "PlayerStart Game Zone") or nil
+    if not UE.valid(zone) then return nil end
+    local at = nil
+    pcall(function() at = UE.vec(zone:K2_GetActorLocation()) end)
+    return at
+end
+
+local function morningTick(now)
+    if not morningUntil then return end
+    if now > morningUntil then
+        morningUntil = nil
+        Log.info("end of day: the host never reached the morning start spot - guests left where they are")
+        return
+    end
+    local zone, host = startZone(), nil
+    pcall(function() host = UE.vec(UE.GetPawn():K2_GetActorLocation()) end)
+    if not (zone and host) then return end
+    local dx, dy = zone.X - host.X, zone.Y - host.Y
+    if math.sqrt(dx * dx + dy * dy) > MORNING_NEAR then return end
+    morningUntil = nil
+    local n = require("guestinput").everyoneToHost("the new morning: beside the host outside")
+    stats.mornings = (stats.mornings or 0) + 1
+    if n > 0 then Log.info("end of day: %d guest(s) start the new day outside with the host", n) end
+end
+
 function DayEnd.tickHost(now)
     if not UE.IsServer() or now < nextHost then return end
     nextHost = now + HOST_EVERY
+    morningTick(now)
     local gm = UE.GetGameMode()
     local w = UE.valid(gm) and UE.TryGet(gm, "End of Day Interface") or nil
     if UE.valid(w) and inViewport(w) then
@@ -192,6 +234,7 @@ function DayEnd.tickHost(now)
         wasUp, lastSig = false, nil
         Chan.broadcast("day", { s = "0" })
         bannerUntil = now + BANNER_WAIT
+        morningUntil = now + MORNING_WAIT
         return
     end
     if bannerUntil then
@@ -391,7 +434,7 @@ function DayEnd.stats() return stats end
 
 function DayEnd.reset()
     nextHost, lastSig, lastAt = 0, nil, 0
-    wasUp, bannerUntil = false, nil
+    wasUp, bannerUntil, morningUntil = false, nil, nil
     -- A world that is going away takes the widget with it.
     summaryPath, sawSummary = nil, false
     unlocksShown, popupsShown = "", {}

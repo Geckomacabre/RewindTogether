@@ -52,6 +52,7 @@ local HELP = {
     { "rt.funcs <what>",   "Dump an object's functions - finds the real interaction name" },
     { "rt.why",            "Why can't we see each other - pawn and mesh check" },
     { "rt.bodies",         "Borrowed NPC bodies: what's here, what's missing" },
+    { "rt.character [clear]", "How you look to the others (F4 on someone in town to choose)" },
     { "rt.stripes",        "The yellow hazard stripes: what's overlaying the store (clear removes them)" },
     { "rt.localgm",        "GUEST: build a local GameMode (experiment - HUD/clock)" },
     { "rt.sweep",          "Re-run the replication pass (fixes invisible props)" },
@@ -316,6 +317,13 @@ handlers["rt.why"] = function(_, dev)
     return true
 end
 
+handlers["rt.character"] = function(params, dev)
+    local Character = require("character")
+    if tostring(params[1] or ""):lower() == "clear" then Character.clear() end
+    for _, line in ipairs(Character.report()) do out(dev, line) end
+    return true
+end
+
 handlers["rt.bodies"] = function(params, dev)
     if tostring(params[1] or ""):lower() == "retry" then
         Bodies.retry()
@@ -480,6 +488,11 @@ handlers["rt.diag"] = function(_, dev)
     for _, line in ipairs(require("pausemenu").report()) do out(dev, "  " .. line) end
     for _, line in ipairs(require("thrown").report()) do out(dev, "  " .. line) end
     for _, line in ipairs(require("computer").report()) do out(dev, "  " .. line) end
+    for _, line in ipairs(require("machines").report()) do out(dev, "  " .. line) end
+    for _, line in ipairs(require("mirror").report()) do out(dev, "  " .. line) end
+    for _, line in ipairs(require("character").report()) do out(dev, "  " .. line) end
+    for _, line in ipairs(require("concessions").report()) do out(dev, "  " .. line) end
+    for _, line in ipairs(require("uimachines").report()) do out(dev, "  " .. line) end
     out(dev, "  Set LogLevel = \"debug\" in config.lua for full detail.")
     return true
 end
@@ -609,6 +622,13 @@ function Commands.init(config)
     end)
 
     bind(cfg.Keys.ToggleMenu, "menu", Commands.showStatus)
+
+    -- Look like the person in the middle of the view, to everyone (character.lua).
+    -- Missing from an older config.lua: F4, which neither the game nor the mod uses
+    -- (F10 opens the console).
+    bind(cfg.Keys.ChooseCharacter or "F4", "choose character", function()
+        require("character").choose()
+    end)
 
     -- Guest presses are forwarded by guestinput.lua now - every one of the
     -- game's own action keys, aimed from the guest's camera, replayed on the

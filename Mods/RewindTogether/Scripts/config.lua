@@ -226,6 +226,12 @@ Config.PlayerLooks = true
 -- them; their own view is untouched. Missing = on.
 Config.CarryInHands = true
 
+-- Another player's body turns like a person's: standing, their head follows
+-- where they look and the body only turns when they look well away; walking,
+-- it turns with them. Off: the whole body faces wherever they look, so it
+-- spins on the spot as they look around. Missing = on.
+Config.NaturalTurning = true
+
 -- EXPERIMENTAL, OFF. Build a whole GameMode on the guest, automatically, once,
 -- a few seconds after they get a pawn.
 --
@@ -493,6 +499,7 @@ Config.Keys = {
     HostGame    = "F7",   -- open your store to friends
     ToggleChat  = "F8",   -- chat
     InviteFriends = "F9", -- open Steam's invite window
+    ChooseCharacter = "F4",  -- the character screen (also in the pause menu: Character)
     -- Was TAB, which is also the game's own "rotate object" key (read off its
     -- input mappings in 1.7.0). rt.players does the same job.
     TogglePlayerList = "",

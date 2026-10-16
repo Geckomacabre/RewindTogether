@@ -32,8 +32,28 @@ local World = {}
 local PUSH_EVERY = 2.0
 local lastPush = 0
 local lastSent = nil
-local applied = { name = nil, unlocked = {} }
+local applied = { name = nil, unlocked = {}, made = {} }
 local announced = false
+
+--[[
+    MEASURED (live, 16 Oct 2026): a guest clicking the host's popcorn machine
+    got nothing. Its own copy had Unlocked and Bought false (the host's: both
+    true), and Interaction stops there (bp/PopcornMachine.txt @49). Those
+    flags come from the save, which only the host's GameMode loads ("Unlock
+    Machine" from the save event, @3262). The slushie machine and the
+    sidewalk sign differed the same way.
+
+    Each of these has "Make Machine Usable For Player"(Instant), the game's
+    own "now it's bought": the flags, the power, the "out of order" or
+    covered look. The host sends which of them are bought, by level name
+    (placed in the level, so both copies have the same names), and a guest
+    runs that on its copy.
+]]
+local BUYABLE = {
+    "PopcornMachine_C", "SlushMachine_C", "CottonCandyMachine_C",
+    "ConsoleRental_Mat_C", "ConsoleRental_Station_C", "CustomMovieStation_C",
+    "RepairStation_C", "SidewalkSign_C",
+}
 
 local function nameOf(actor)
     local ok, n = pcall(function() return actor:GetFName():ToString() end)
@@ -61,20 +81,43 @@ end
 -- Host
 --------------------------------------------------------------------------
 
+--- The store's name sign as it stands: its name, colour, size, the two neon
+--- colours and the font (one of four, named: StoreName.txt @4835-@5108).
+function World.signFields(sign, out)
+    out = out or {}
+    out.n = textOf(UE.TryGet(sign, "Name"))
+    out.c = colorString(UE.TryGet(sign, "Color"))
+    local size = UE.TryGet(sign, "Size")
+    if type(size) == "number" then out.s = ("%.3f"):format(size) end
+    -- The neon is not the text colour: measured blue on the host and the
+    -- guest's default orange/pink with Name and Color already mirrored.
+    out.fc = colorString(UE.TryGet(sign, "Front Store Light Color"))
+    out.sc = colorString(UE.TryGet(sign, "Sign Store Light Color"))
+    local font = UE.TryGet(sign, "Font")
+    if UE.valid(font) then out.ft = nameOf(font) end
+    return out
+end
+
+-- The four fonts the sign's editor offers (UI_StoreName "Set Font of Store Name").
+World.FONTS = { roboto = "/Engine/EngineFonts/Roboto.Roboto",
+                ["inter-v"] = "/Game/VideoStore/core/widget/font/Inter-V.Inter-V",
+                reglo = "/Game/VideoStore/core/widget/font/Reglo.Reglo",
+                notosanssc = "/Game/VideoStore/core/widget/font/NotoSansSC.NotoSansSC" }
+
+--- A font by its name, any casing (an FName's casing is whoever named it first).
+function World.font(name)
+    local path = type(name) == "string" and World.FONTS[name:lower()] or nil
+    if not path then return nil end
+    local f = StaticFindObject(path)
+    if not UE.valid(f) and LoadAsset then pcall(function() f = LoadAsset(path) end) end
+    return UE.valid(f) and f or nil
+end
+
 local function collect()
     local out = {}
 
     local sign = UE.findFirst("StoreName_C")
-    if UE.alive(sign) then
-        out.n = textOf(UE.TryGet(sign, "Name"))
-        out.c = colorString(UE.TryGet(sign, "Color"))
-        local size = UE.TryGet(sign, "Size")
-        if type(size) == "number" then out.s = ("%.3f"):format(size) end
-        -- The neon is not the text colour: measured blue on the host and the
-        -- guest's default orange/pink with Name and Color already mirrored.
-        out.fc = colorString(UE.TryGet(sign, "Front Store Light Color"))
-        out.sc = colorString(UE.TryGet(sign, "Sign Store Light Color"))
-    end
+    if UE.alive(sign) then World.signFields(sign, out) end
 
     local unlocked = {}
     for _, e in ipairs(UE.findAll("StoreExpansion_C") or {}) do
@@ -85,6 +128,19 @@ local function collect()
     end
     table.sort(unlocked)
     out.x = table.concat(unlocked, ";")
+
+    -- Machines the host has bought: see applyMachines.
+    local bought = {}
+    for _, cls in ipairs(BUYABLE) do
+        for _, m in ipairs(UE.findAll(cls) or {}) do
+            if UE.alive(m) and UE.TryGet(m, "Bought") == true then
+                local n = nameOf(m)
+                if n then bought[#bought + 1] = n end
+            end
+        end
+    end
+    table.sort(bought)
+    out.mb = table.concat(bought, ";")
 
     -- The season sub-level (snow, bare trees, decorations) - see applySeason.
     local weather = UE.findFirst("WeatherSystem_C")
@@ -189,6 +245,10 @@ local function collectSky()
     local weather = UE.findFirst("WeatherSystem_C")
     if not UE.alive(weather) then return out end
 
+    -- The time of day, as the weather names it (morning, day, evening, night).
+    local dt = tonumber(UE.TryGet(weather, "DayTime"))
+    if dt then out.dt = tostring(math.floor(dt)) end
+
     -- Every light the weather adjusts, by full path + component name.
     local actors = {}
     for _, k in ipairs({ "ref Directional", "ref Sky Light" }) do
@@ -244,6 +304,36 @@ local function collectSky()
 end
 
 local skyApplied = {}
+
+--[[
+    THE TIME OF DAY'S LISTENERS. The lamps' lights (Light_DayTimeToggle_C),
+    the street lights (Outside_Light_Base_C), the light effects
+    (VFX_DayTimeToggle_C) and the ambience (Audio_TimeOfDay_C,
+    Audio_AmbienceSystem_C) find the weather through the GameMode ("Timer Get
+    Gatherer Event", bp/Light_DayTimeToggle.txt @852) and bind to its "Day
+    Time is Update" - which on a guest never happens, so they stay as the
+    level was saved whatever the time. Each one's own handler decides from
+    its own list (@62: on for the times in "Enable on Day Time"), so the
+    guest calls them with the host's time of day when it changes.
+]]
+local DAYTIME_LISTENERS = {
+    { "Light_DayTimeToggle_C",  "New Day Time Event" },
+    { "VFX_DayTimeToggle_C",    "New Day Time Event" },
+    { "Outside_Light_Base_C",   "New Day Time Event" },
+    { "Audio_TimeOfDay_C",      "Weather Day Time is Update Event" },
+    { "Audio_AmbienceSystem_C", "Day Time is Update_Event" },
+}
+
+local function applyDayTime(dt)
+    local told = 0
+    for _, l in ipairs(DAYTIME_LISTENERS) do
+        for _, o in ipairs(UE.findAll(l[1]) or {}) do
+            if UE.valid(o) and pcall(function() o[l[2]](o, dt) end) then told = told + 1 end
+        end
+    end
+    Log.info("world: time of day %d - %d light(s), effect(s) and sound(s) told", dt, told)
+    return told
+end
 
 local function setOnce(key, value, fn)
     if skyApplied[key] == value then return end
@@ -304,6 +394,12 @@ local function applySky(fields)
             end)
         end
     end
+    -- Once per change: a component list is an object walk (ue.lua).
+    local dt = tonumber(fields.dt)
+    if dt and skyApplied.dayTime ~= dt then
+        skyApplied.dayTime = dt
+        applyDayTime(math.floor(dt))
+    end
     if UE.alive(weather) and type(fields.f) == "string" then
         local d, r, g, b = fields.f:match("^([%d%.%-]+),([%d%.%-]+),([%d%.%-]+),([%d%.%-]+)$")
         local fog = UE.TryGet(weather, "ref Height Fog")
@@ -332,12 +428,13 @@ function World.tickHost(now)
     -- second ago, or whose own GameMode has just reset the store, needs it.
     Chan.broadcast("world", state)
 
-    local key = (state.n or "") .. "|" .. state.x
+    local key = (state.n or "") .. "|" .. state.x .. "|" .. state.mb
     if key ~= lastSent then
         lastSent = key
         local count = select(2, state.x:gsub("[^;]+", ""))
-        Log.info("store look: sign \"%s\", %d expansion(s) bought - mirrored to guests",
-                 tostring(state.n), count)
+        local machines = select(2, state.mb:gsub("[^;]+", ""))
+        Log.info("store look: sign \"%s\", %d expansion(s) and %d machine(s) bought - mirrored to guests",
+                 tostring(state.n), count, machines)
     end
 end
 
@@ -391,7 +488,16 @@ local function applySign(fields)
     if not fields.n then return end
     local sign = UE.findFirst("StoreName_C")
     if not UE.alive(sign) then return end
+    -- A guest renaming the store (uimachines.lua): its own editor's sign
+    -- stands until the host's agrees.
+    local UIM = require("uimachines")
+    UIM.noteHostSign(fields)
+    if UIM.holdSign() then return end
     applySignLights(sign, fields)
+    if fields.ft and nameOf(UE.TryGet(sign, "Font") or {}) ~= fields.ft then
+        local f = World.font(fields.ft)
+        if f and UE.TrySet(sign, "Font", f) then UE.TryCall(sign, "Set StoreName Visual") end
+    end
     -- Compared with what the sign SAYS, not with what was last written: a
     -- local GameMode loading its own save puts its own name back.
     if textOf(UE.TryGet(sign, "Name")) == fields.n then return end
@@ -437,6 +543,28 @@ local function applyExpansions(fields)
     if opened > 0 then
         Log.info("store expansions: opened %d the host has bought - the hazard " ..
                  "stripes there should be gone", opened)
+    end
+end
+
+local function applyMachines(fields)
+    if not fields.mb then return end
+    local want = {}
+    for n in fields.mb:gmatch("[^;]+") do want[n] = true end
+
+    local made = {}
+    for _, cls in ipairs(BUYABLE) do
+        for _, m in ipairs(UE.findAll(cls) or {}) do
+            local n = UE.alive(m) and nameOf(m) or nil
+            -- Three tries each: a machine that will not take it is not
+            -- called every two seconds for the rest of the session.
+            if n and want[n] and UE.TryGet(m, "Bought") ~= true and (applied.made[n] or 0) < 3 then
+                applied.made[n] = (applied.made[n] or 0) + 1
+                if UE.TryCall(m, "Make Machine Usable For Player", true) then made[#made + 1] = n end
+            end
+        end
+    end
+    if #made > 0 then
+        Log.info("machines: %s bought, as on the host", table.concat(made, ", "))
     end
 end
 
@@ -496,6 +624,7 @@ local function onWorld(fields)
     if UE.IsServer() then return end
     applySign(fields)
     applyExpansions(fields)
+    applyMachines(fields)
     applySeason(fields)
     if not announced then
         announced = true
@@ -526,8 +655,58 @@ local BLOCKER_EVERY = 15.0
 local BLOCKER_CHECK_EVERY = 2.0   -- counting them means listing them (ue.lua)
 local blockersReported = false
 
+--[[
+    THE TELEVISIONS. A TV shows the movie of the MoviePlayer_C on its channel:
+    "Try to Get Movie Player on the Correct Channel" finds it in the GameMode's
+    Actor Gatherer (bp/BP_Television_BASE.txt @5) and tries again every second
+    when it cannot - on a guest, forever. The movie players themselves never
+    start there either: their BeginPlay registers with the gatherer first and
+    only then makes the screen's material and loads a clip (MoviePlayer @1296).
+    So on a guest every TV stayed dark. The guest starts its own movie players
+    the way their BeginPlay would, and gives each TV its channel's player the
+    way the TV's own function does (@683-@1016: its screen material, the
+    volume, the sound). The clip is the guest's own pick of the channel.
+]]
+local TV_EVERY = 5.0
+local tvNext = 0
+local playersStarted = {}   -- movie player full name -> true
+
+local function televisions(now)
+    if now < tvNext then return end
+    tvNext = now + TV_EVERY
+    local players = UE.findAll("MoviePlayer_C") or {}
+    if #players == 0 then return end
+    for _, mp in ipairs(players) do
+        local name = UE.alive(mp) and mp:GetFullName() or nil
+        if name and not playersStarted[name] and not UE.valid(UE.TryGet(mp, "Dynamic Mat Instance for TV Screen")) then
+            playersStarted[name] = true
+            UE.TryCall(mp, "Create Material for TV")
+            UE.TryCall(mp, "Load a new clip")
+            Log.info("televisions: started the movie player for channel %s", tostring(UE.TryGet(mp, "TV Channel")))
+        end
+    end
+    for _, tv in ipairs(UE.findAll("BP_Television_BASE_C") or {}) do
+        if UE.alive(tv) and not UE.valid(UE.TryGet(tv, "Movie Player ref")) then
+            local channel = UE.TryGet(tv, "TV Channel")
+            for _, mp in ipairs(players) do
+                if UE.alive(mp) and UE.TryGet(mp, "TV Channel") == channel and UE.TryGet(mp, "Movie is Ready") == true then
+                    local mat, mesh = UE.TryGet(mp, "Dynamic Mat Instance for TV Screen"), UE.TryGet(tv, "Mesh")
+                    if UE.valid(mat) and UE.valid(mesh) and pcall(function() mesh:SetMaterial(1, mat) end) then
+                        UE.TrySet(tv, "Movie Player ref", mp)
+                        UE.TryCall(tv, "Set Audio Volume", tonumber(UE.TryGet(tv, "TV Audio Volume")) or 1.0)
+                        UE.TryCall(tv, "Volume Visiblity", false)
+                        UE.TryCall(tv, "Set Audio Of Movie")
+                    end
+                    break
+                end
+            end
+        end
+    end
+end
+
 function World.guestTick(now, cfg)
     if not UE.IsClient() then return end
+    Log.guard("televisions", televisions, now)
     if cfg and cfg.ClearBuildModeOverlay == false then return end
     if (now - lastBlockerCheck) < BLOCKER_CHECK_EVERY then return end
     lastBlockerCheck = now
@@ -549,7 +728,7 @@ function World.guestTick(now, cfg)
 end
 
 function World.reset()
-    applied = { name = nil, unlocked = {} }
+    applied = { name = nil, unlocked = {}, made = {} }
     lastSent, announced = nil, false
     signLights, signLightsAt = nil, nil
     signMaterialsMade = false
@@ -557,6 +736,7 @@ function World.reset()
     lastBlockerCheck = -math.huge
     seasonTried = {}
     skyApplied, lastSky = {}, 0
+    tvNext, playersStarted = 0, {}
 end
 
 function World.init()

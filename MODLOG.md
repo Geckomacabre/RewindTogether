@@ -681,3 +681,88 @@ starts itself, sync/interaction verified, docs for strangers.
 - The guest's frame dips (14-20 fps at times in the clip) were not explained: the host is this
   PC, the guest a friend's; measuring inside the running host would have meant restarting it.
 - Smoke 419 PASS (2 new). Host log for the session: no errors.
+
+### 1.8.0: characters, every machine, bodies, mornings (2026-10-16)
+
+- Audit: docs/MULTIPLAYER-AUDIT.md (status by system, measured on the two-copy rig).
+- Return desk: machines.lua seats a guest at the HOST's desk (Toggle Machine as the guest, glide
+  stopped, finishing step run as the guest) and replays clicks and drags from the guest's camera;
+  a drag cursor spawned outside a guest window is the host's and is handed over (Toggle Input off,
+  on again as the guest). mirror.lua hooks the desk's cosmetic functions on the host and plays
+  them on the guest's copy (screen frame, case open/close, tape in the rewinder) and watches the
+  rewinder door/base and the case's tape. Verified: a guest rewinds a tape end to end.
+- Carried items: each socket offset by minus its first child's relative location -> the item on
+  the hand on every remote screen.
+- Day/night on guests: the time-of-day listeners bind through the GameMode; each is told the
+  host's DayTime once per change (94 told). TVs: the guest's movie players never start; started
+  and each TV wired to a player on its channel (8/8 pictures).
+- Bought machines: on a guest the popcorn machine had Unlocked/Bought false (save state, loaded
+  only by the host's GameMode), so Interaction stopped @49. worldsync sends which machines the
+  host has bought; the guest runs "Make Machine Usable For Player"(true) (popcorn, slushie,
+  sidewalk sign differed; also covers cotton candy, console rental, custom movie station, repair
+  station).
+- Concessions: replaying them on the host goes half way (the kettle pour works) but the shovel
+  follows player 0's mouse/camera every tick and the full cup goes to player 0 a tick later, so
+  the guest plays its own copy and the host makes results real (concessions.lua): popcorn level
+  both ways (action 17), a product the guest's game put in its hands is put away and made for real
+  by the host in the guest's hands (action 18: kind x 60 + fill x 50 in yaw, flavour in pitch -
+  a rotator crosses as three 0..360 angles), fill and flavour shown on the guest's copies (they do
+  not replicate: the real cup read 0 on the guest). Verified live: popcorn scoop/drop/full cup,
+  slushie hand-off with flavour. Cotton candy not bought in the test save.
+- "The pawns move in circles" (the user's recording): a remote body faced the view 1:1, and
+  standing still its hips traced a 30 cm loop every 1.6 s. AnimBP_Base adds Blend1D_Rotate (the
+  town's turn-on-the-spot steps) at full weight when standing (ApplyMeshSpaceAdditive, alpha
+  1 - Speed/15), picked by "Rotation Delta Z Normalize" - an NPC's update makes it (still to turn
+  + rate/2)/rate = 0.5 standing still; on a player nothing writes it, 0 = turning for ever.
+  Measured hips 21x16 cm at 0, 17x12 at 1, 0x1 at 0.5. Now 0.5, and the NPC formula while the body
+  turns on the spot. Bodies also turn like people (head look-at node from "Look At Pos"/"Look at
+  Player Alpha", body turns past 60 degrees or walking), per frame from the pawns' ReceiveTick -
+  on the host the guest pawn's tick is stopped (guestinput.lua), so the host's own pawn's tick
+  turns the guests' bodies, found through the controllers. Engine rotation smoothing set to 0 on
+  remote pawns. Verified on video: idle body still (hips 4x4 cm over 8 s).
+- Mornings: "Create a new day" teleports only player 0. dayend.lua waits until the host is at
+  the Actor Gatherer's "PlayerStart Game Zone" and puts every guest beside them, facing the same
+  way (ClientSetRotation). Verified: guest moved from the store to the start, Mon 8:00.
+- Characters (requested: "show all possible characters and let people pick one", "make it like
+  the developers made it themselves"): the character screen (charscreen.lua) is a second
+  UI_ESC-Menu_C (its Construct sets the input mode, the cursor and the menu's own mapping; the
+  host's pause is undone at once) with its blur hidden and its column replaced by a dark panel in
+  the menu's own font and UX_Button_ESC_C buttons; a SkeletalMeshActor figure (not replicated)
+  dressed by bodies.lua, playing Anim_CHA_Idle_1. creator.lua: the 14 named regulars
+  (AI_Data_Membership-Unique), every body's own clothes plus the regulars' textures, 26/17 hair
+  meshes by gender, 9 hair colours, beards, glasses, 13 tints, heights 0.85-1.10; wardrobe.lua is
+  generated from the dumps (dev/make_wardrobe.py). Opens by itself the first time (10 s after a
+  pawn, not at a machine/till/talk/summary), from the pause menu's "Character" and F4. A guest's
+  look crosses as FNames over ServerNotifyLoadedWorld ("RTLK:i/n:piece", 800 chars each).
+  - A shipping build forgets a SkeletalMeshComponent's single-node animation when its mesh is
+    swapped (AnimationData is editor-only): the figure went to its bind pose on every body change.
+    PlayAnimation again after each new body.
+  - The figure's place: traces (LineTraceSingle; its FHitResult lands in its own out table:
+    Distance, ImpactPoint...) at knee, chest and eye height toward the spot, 12 directions, plus
+    other players' pawns (they do not stop a trace), then a floor trace under it.
+  - Height (cs) now goes on every player's body (mesh RelativeScale3D, feet stay on the floor) and
+    into the look's signature; the walk's play rate divides by it, as the town's does.
+- THE HUD STAND-IN (critical): asGuest nilled the GameMode's "UI Game Interface" so a guest's
+  panels stayed off the host's screen - and Change Money, with no widget, writes the total and
+  returns WITHOUT setting "Have enough money" (@430 -> @810). The snack shelf charged, spawned the
+  snack at the box, failed the check and destroyed it (pending-kill actors at (0,0,0) in
+  FindAllOf). A manual replay with the widget left in place stocked 3/3. Now asGuest swaps in a
+  second UI_Player_Interface_C made with WidgetBlueprintLibrary:Create and never constructed or
+  shown (its money/XP pop-ups cleared after each call). Snack adds 3/3, the till sale (scan x3,
+  cash, $4.50 change, Space) and catalogue orders all verified after it.
+- Screen machines (uimachines.lua, from a full read of all ten in the dumps): catalogue cards uncovered by the mirrored level
+  (class CDO "Unlock Level" / "Product Unlock Level"), station cards via their own Generate Text
+  with the machine's own TSoftObjectPtr property value handed straight back (works; a Lua string
+  there is a native crash), purchases = action 21 run by the host widget's own handler with a nil
+  card (never read); array out-parameters come back as a Lua list of RemoteUnrealParams (`:get()`).
+  Expansion map linked per room from the host's sectors' refs; sidewalk sign ad; level board
+  cross-mark/post-its; store name via an "RTSN:" FName (hex: an FName keeps its first casing),
+  plus the sign's font now mirrored. Clicks on screen machines are no longer replayed on the host
+  (the repair desk, sidewalk sign and store name sign never ask "Can Player use the machine?";
+  their glide would run on the host).
+- Phone: its ring sound, light, shake, interact icon and handset mirrored (mirror.lua LIST).
+- Bridge probes, two ways to crash the game outright (pcall cannot catch either): GetFName() on
+  an invalid wrapper (a property read that came back empty: reads 0x18, UObject's name), and
+  member names typed only into the bridge (UE4SS keeps a pointer into the Lua string; use
+  UE.TryGet/TryCall, which pin the name).
+- Smoke 487 PASS.

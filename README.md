@@ -67,7 +67,8 @@ in the download) walks hosts and guests through every step.
 | Feature | What it means |
 |---|---|
 | 🏬 **One shared store** | The host's save is the store everyone plays in: shelves, stock, decorations, expansions and the sign, exactly as the host sees them. |
-| 🛒 **Guests work the store** | Pick up and shelve tapes, ring customers up at the till, order movies at the office computer, use build mode and the paint tool, talk to the staff. Every action happens on the host's game, so all screens match. |
+| 🧍 **Your own character** | A character screen in the game's own style: one of the store's 14 regulars, or your own from every body, hairstyle, outfit and colour the town has. Everyone sees you that way, in every game. |
+| 🛒 **Guests work the store** | Pick up and shelve tapes, ring customers up at the till, work the return desk, order at the office computer and the catalogue, stock the snack shelves, make popcorn, slushies and cotton candy, use build mode and the paint tool, answer the phone, talk to the staff. Every action happens on the host's game, so all screens match. |
 | 🌆 **The whole town matches** | Money, XP and level, the clock, the day, season and weather, the sky and street lights, every customer's looks and words, and the end-of-day summary. |
 | 💾 **Only the host saves** | A guest's own saves are never read or written. |
 | 🧩 **Mods from Nexus Mods** | Browse Retro Rewind's mods inside the launcher. **Download** takes one click on Nexus, and the launcher installs the file by itself. |
@@ -87,6 +88,16 @@ in the download) walks hosts and guests through every step.
   picture) and the Black Market search, on the guest's screen. **Buy** pays with the store's
   money and the tapes arrive at the delivery spot for everyone. The Data page lists every movie
   of a genre, the store's own copies first, with how often each was rented.
+- **The catalogue:** shelves, equipment and decorations, unlocked as far as the store's level goes,
+  and the counter stations. **Buy** is the host's own catalogue ordering it: the store's money, the
+  box at the delivery spot.
+- **The store expansion map, the sidewalk sign's ad, the store's name sign and the level board,**
+  the way the host sees them; a guest's room, ad or new name is the store's.
+- **The return desk:** scan, rewind and put away returned tapes at the host's desk.
+- **The snack shelves:** stock them from the box and take snacks back off.
+- **Popcorn, slushies and cotton candy:** made on the guest's own screen, a real one in their
+  hands for everyone.
+- **The phone:** it rings for everyone; a guest can answer it and talk to the caller.
 - **Build mode:** pack furniture and place it, with the guest's own green/red placement preview.
 - **The paint (skin) tool:** colours for the carpet and the shelves.
 - **Talk to the staff member:** the conversation opens on the guest's screen and the guest
@@ -106,8 +117,9 @@ in the download) walks hosts and guests through every step.
 - **Shelf titles, the signs you wrote and the film posters.**
 - **The end of the day:** the host's summary, the XP bar and the level-up unlocks, then the
   new-day banner.
-- **Each other player:** a town character's look (clothes, colours, hair, face) picked by the
-  host, the same on every screen; walking when they walk; what they carry in their hands.
+- **Each other player:** the character they chose (or a town character's look, until they do),
+  the same on every screen; walking when they walk; looking around and turning like a person;
+  what they carry in their hands.
 
 </details>
 
@@ -155,6 +167,7 @@ changed.
 | **F7** | Host: open your store to friends (the launcher does this for you) |
 | **F5** | Join `Config.JoinTarget` or a hosting friend |
 | **F6** | Status: a short box in the middle of the screen for 8 seconds (in a store), and the full report in `RewindTogether.log` |
+| **F4** | The character screen (also in the pause menu as **Character**, and by itself the first time you play) |
 | **Esc** | The pause menu, guests included. **Back to the store** in it gets you out of anywhere you're stuck: a guest lands beside the host, the host by the register |
 
 <details>
@@ -184,6 +197,10 @@ have turned it on. A fresh install doesn't show one.)
 - **The host decides when the day ends.** Guests see the summary and follow into the next day;
   its buttons are the host's.
 - **Guests can't change a shelf's model** (the mesh tool). Colours (the paint tool) work.
+- **The staff book and the calendar's rewards are the host's** for now: a guest's copy shows them
+  empty. Firing staff and changing their job also work by talking to them, which guests can do.
+- **The repair desk's minigame is the host's** for now (a guest's click there does nothing).
+- **The console rental mat and station** need store level 21 and were not tried with a guest yet.
 - **A new video game's banner picture doesn't show on a guest's office computer** (movies'
   standee pictures do; the banner itself still comes with the order).
 - **A guest's Black Market buy counts for the host's Steam achievements,** the same as the host's

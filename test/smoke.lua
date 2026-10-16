@@ -796,6 +796,11 @@ local hostSign = H.spawn("StoreName_C", { Name = FText("VIDEO KING"),
     Color = { R = 1, G = 0.2, B = 0.6, A = 1 }, Size = 1.5 })
 local boughtExp = H.spawn("StoreExpansion_C", { Unlocked = true })
 local lockedExp = H.spawn("StoreExpansion_C", { Unlocked = false })
+-- MEASURED (16 Oct 2026): on a guest the popcorn machine was Unlocked/Bought
+-- false (the host's true), so a guest could not use it.
+local mach = {}      -- one local: this chunk is near Lua's 200-local limit
+mach.hostPopcorn = H.spawn("PopcornMachine_C", { Bought = true, Unlocked = true })
+mach.hostCandy = H.spawn("CottonCandyMachine_C", { Bought = false, Unlocked = false })
 UE.beginFrame()
 World.tickHost(2000.0)
 local worldWire = sentStrings[#sentStrings] or ""
@@ -805,9 +810,22 @@ check("the host sends its sign and bought expansions",
       and worldWire:find(lockedExp:GetFName():ToString(), 1, true) == nil,
       worldWire ~= "" and worldWire or "<nothing sent>")
 
+check("and which of the store's machines it has bought",
+      worldWire:find(mach.hostPopcorn:GetFName():ToString(), 1, true) ~= nil
+      and worldWire:find(mach.hostCandy:GetFName():ToString(), 1, true) == nil, worldWire)
 local boughtName, lockedName = boughtExp:GetFName():ToString(), lockedExp:GetFName():ToString()
+mach.popcornName, mach.candyName = mach.hostPopcorn:GetFName():ToString(), mach.hostCandy:GetFName():ToString()
 H.world.objects["StoreName_C"] = nil
 H.world.objects["StoreExpansion_C"] = nil
+H.world.objects["PopcornMachine_C"], H.world.objects["CottonCandyMachine_C"] = nil, nil
+function mach.guestCopy(cls, name)
+    local m = H.spawn(cls, { Bought = false, Unlocked = false,
+        ["Make Machine Usable For Player"] = function(self, instant) self.Bought, self.Unlocked, self.__instant = true, true, instant end })
+    m.GetFName = function() return FName(name) end
+    return m
+end
+mach.guestPopcorn = mach.guestCopy("PopcornMachine_C", mach.popcornName)
+mach.guestCandy = mach.guestCopy("CottonCandyMachine_C", mach.candyName)
 local guestSign = H.spawn("StoreName_C", { Name = FText("RETRO REWIND"),
     ["Set StoreName Visual"] = function(self) self.__redrawn = true end })
 local guestBought = H.spawn("StoreExpansion_C", { Unlocked = false,
@@ -839,8 +857,12 @@ check("the guest's sign reads the host's name",
 check("an expansion the host bought opens on the guest, instantly",
       guestBought.Unlocked == true and guestBought.__instant == true, "still locked")
 check("one the host has not bought stays shut", guestLocked.Unlocked == false, "opened")
+check("a machine the host bought is made usable on the guest - the game's own call, instantly",
+      mach.guestPopcorn.Bought == true and mach.guestPopcorn.__instant == true, "still not bought")
+check("one the host has not bought is left as it is", mach.guestCandy.Bought == false, "made usable")
 H.world.objects["StoreName_C"] = nil
 H.world.objects["StoreExpansion_C"] = nil
+H.world.objects["PopcornMachine_C"], H.world.objects["CottonCandyMachine_C"] = nil, nil
 World.reset()
 
 -- ------------------------------------------- 6g. NPCs, host to guest --
@@ -2547,14 +2569,29 @@ do
 print("\n-- a guest's action and the host's HUD --")
 -- MEASURED: a guest sold a standee, the store's money went up $10.00, and the
 -- host's HUD kept the old total - the widget is hidden from the game for the
--- length of a replay, and Change Money skips the HUD without it.
+-- length of a replay, and Change Money skips the HUD without it. And hidden
+-- means a stand-in, never nothing: with no widget Change Money answers "not
+-- enough money" after taking it (a guest paid for snacks that never went on
+-- the shelf, 16 Oct 2026).
 local GuestInput2 = require("guestinput")
 local Native = require("native")
 local hudCalls = {}
+-- On H, not a local: the main chunk is at Lua's 200-local limit.
+H.standIn = { class = H.obj("WidgetBlueprintGeneratedClass", { __isActor = false }), made = {}, cleared = 0,
+                  during = "not called" }
 local hostHud = H.obj("UI_Player_Interface_C", {
     ["Change Money Value"] = function(_, change, new) hudCalls[#hudCalls + 1] = { "money", change, new } end,
     ["Change XP Value"]    = function(_, change, new) hudCalls[#hudCalls + 1] = { "xp", change, new } end,
 })
+hostHud.GetClass = function() return H.standIn.class end    -- after: H.obj sets its own
+H.staticObjects["/Script/UMG.Default__WidgetBlueprintLibrary"] = H.obj("WidgetBlueprintLibrary", { __isActor = false,
+    Create = function(_, world, cls)
+        if cls ~= H.standIn.class then return nil end
+        local w = H.obj("UI_Player_Interface_C", { __isActor = false,
+            Overlay_Money = { ClearChildren = function() H.standIn.cleared = H.standIn.cleared + 1 end } })
+        H.standIn.made[#H.standIn.made + 1] = w
+        return w
+    end })
 local gm = H.spawn("Core_Gamemode_C", { Money = 320960852, Experience = 7112, ["UI Game Interface"] = hostHud })
 local tool = 1
 local seller = H.spawn("Player_Character_C", {
@@ -2563,6 +2600,8 @@ local seller = H.spawn("Player_Character_C", {
     ["Current Tool in hand"] = 1,
     ["InpActEvt_Input_Sell_K2Node_EnhancedInputActionEvent_0"] = function(self)
         gm.Money = gm.Money + 1000              -- Change Money, as Init Sell does it
+        local w = gm["UI Game Interface"]
+        H.standIn.during = (w == nil and "none") or (w == hostHud and "the host's") or "a stand-in"
         self["Current Tool in hand"] = 0       -- and Throw puts the hand tool back
     end,
     GetAddress = function() return 0x9200 end,
@@ -2592,11 +2631,15 @@ UE.beginFrame()
 upHook(rpcGuestPC, { X = 1480, Y = -1700, Z = 152 }, UE.rotArg({ Pitch = -27, Yaw = -90, Roll = 106 }))
 Chan.pump()
 check("a guest's sale is replayed inside a guest window", windows == 1, ("%d window(s)"):format(windows))
+check("the game has a widget all the while - a copy never on screen, so Change Money says the money was there",
+      H.standIn.during == "a stand-in" and #H.standIn.made >= 1 and H.standIn.cleared >= 1,
+      ("during the sale: %s; %d stand-in(s), pop-ups cleared %d"):format(H.standIn.during, #H.standIn.made, H.standIn.cleared))
 check("and the host's HUD is given the new total",
       gm["UI Game Interface"] == hostHud and hudCalls[1] and hudCalls[1][1] == "money"
       and hudCalls[1][2] == 1000 and hudCalls[1][3] == 320961852,
       hudCalls[1] and table.concat({ tostring(hudCalls[1][1]), tostring(hudCalls[1][2]), tostring(hudCalls[1][3]) }, " ") or "no HUD call")
 check("XP that did not change is not touched", #hudCalls == 1, ("%d HUD call(s)"):format(#hudCalls))
+H.staticObjects["/Script/UMG.Default__WidgetBlueprintLibrary"] = nil
 
 -- The host decides which tool the guest holds now (Throw put the hand back),
 -- and tells that guest.
@@ -2725,6 +2768,125 @@ later()
 upHook(rpcGuestPC, { X = 1500, Y = -1800, Z = 0 }, UE.rotArg({ Pitch = 3, Yaw = 4, Roll = 108 }))
 Chan.pump()
 check("what a guest picks in the skin picker is set on the host's copy", chosen[1] == 4, tostring(chosen[1]))
+
+-- A guest at a machine worked by looking around (machines.lua): the return desk.
+do
+    local Machines = require("machines")
+    local calls, cursorCalls, handed = {}, {}, {}
+    local function tl(name)
+        return H.obj("TimelineComponent", { __isActor = false, playing = false,
+            IsPlaying = function(self) return self.playing end,
+            Stop = function(self) self.playing = false calls[#calls + 1] = "stop " .. name end })
+    end
+    local tin, tout = tl("in"), tl("out")
+    local desk = H.obj("Return_C", { ["In Machine Mode"] = false, ["Player is currently moving"] = false,
+        ["Hide Cursor Interface while Using"] = false,
+        ["Timeline Moving player to the SlushMachine"] = tin, ["Timeline Moving player out of SlushMachine"] = tout,
+        K2_GetActorLocation = function() return { X = 900, Y = -400, Z = 90 } end,
+        ["Toggle Machine"] = function(self, on)
+            calls[#calls + 1] = "toggle " .. tostring(on)
+            if on then
+                self["In Machine Mode"], self["Player is currently moving"], tin.playing = true, true, true
+            elseif not self["Player is currently moving"] then
+                self["Player is currently moving"], tout.playing = true, true
+            end
+        end,
+        ["Timeline Moving player to the SlushMachine__FinishedFunc"] = function(self)
+            calls[#calls + 1] = "finish in" self["Player is currently moving"] = false end,
+        ["Timeline Moving player out of SlushMachine__FinishedFunc"] = function(self)
+            calls[#calls + 1] = "finish out"
+            self["Player is currently moving"], self["In Machine Mode"] = false, false
+        end })
+    local screenMachine = H.obj("ComputerScreen_C", { ["In Machine Mode"] = false,
+        ["Hide Cursor Interface while Using"] = true,
+        K2_GetActorLocation = function() return { X = 2000, Y = 0, Z = 90 } end,
+        ["Toggle Machine"] = function() calls[#calls + 1] = "screen machine toggled" end })
+    local cursors = {}
+    local savedFindAll, savedSellerAt = UE.findAll, seller.K2_GetActorLocation
+    UE.findAll = function(short)
+        if short == "MachineActor_C" then return { desk, screenMachine } end
+        if short == "Cursor-Movement_Distance_C" then return cursors end
+        return savedFindAll(short)
+    end
+    seller.K2_GetActorLocation = function() return { X = 880, Y = -420, Z = 92 } end
+    local guestKey = rpcGuestPC:GetFullName()
+    local function send(roll, pitch, loc)
+        UE.beginFrame()
+        later()
+        upHook(rpcGuestPC, loc or { X = 900, Y = -400, Z = 90 }, UE.rotArg({ Pitch = pitch or 0, Yaw = 20, Roll = roll }))
+        Chan.pump()
+    end
+
+    send(114, 1)
+    check("a guest sitting at the return desk is sat there on the host, the glide stopped and finished as the guest",
+          desk["In Machine Mode"] == true and calls[1] == "toggle true" and calls[2] == "stop in"
+          and calls[3] == "finish in" and Machines._seated()[guestKey] ~= nil, table.concat(calls, ", "))
+    send(114, 1)
+    check("saying so again (every few seconds) does not sit them down twice", #calls == 3, table.concat(calls, ", "))
+
+    -- A drag: the guest's cursor hears the button go down (before the pawn,
+    -- as the input stack orders them), the camera while it is held, and the
+    -- release - all on the host, as the guest.
+    local cur = H.obj("Cursor-Movement_Distance_C", { ["ref As Player Character"] = seller, ["Started Testing"] = false,
+        K2_GetActorLocation = function() return { X = 920, Y = -380, Z = 100 } end,
+        ["InpActEvt_Input_Main-Trigger_K2Node_EnhancedInputActionEvent_1"] = function(self)
+            cursorCalls[#cursorCalls + 1] = "started" self["Started Testing"] = true end,
+        ["InpActEvt_Input_Main-Trigger_K2Node_EnhancedInputActionEvent_0"] = function()
+            cursorCalls[#cursorCalls + 1] = "held" end,
+        ["InpActEvt_Input_Main-Trigger_K2Node_EnhancedInputActionEvent_3"] = function(self)
+            cursorCalls[#cursorCalls + 1] = "done" self["Started Testing"] = false end,
+        ["Force End of Main Trigger"] = function() cursorCalls[#cursorCalls + 1] = "forced" end })
+    cursors[1] = cur
+    local savedLmb = seller["InpActEvt_Input_Main-Trigger_K2Node_EnhancedInputActionEvent_20"]
+    seller["InpActEvt_Input_Main-Trigger_K2Node_EnhancedInputActionEvent_20"] = function()
+        cursorCalls[#cursorCalls + 1] = "pawn" end
+    send(101, -30, { X = 880, Y = -420, Z = 150 })
+    check("a guest's left click at the machine reaches its drag cursor, then the pawn",
+          cursorCalls[1] == "started" and cursorCalls[2] == "pawn", table.concat(cursorCalls, ", "))
+    send(116, -35, { X = 880, Y = -420, Z = 150 })
+    send(115, -40, { X = 880, Y = -420, Z = 150 })
+    check("held, then let go: the cursor hears both",
+          cursorCalls[3] == "held" and cursorCalls[4] == "done", table.concat(cursorCalls, ", "))
+    seller["InpActEvt_Input_Main-Trigger_K2Node_EnhancedInputActionEvent_20"] = savedLmb
+
+    -- A cursor the desk spawned after an animation took the HOST as its player.
+    local hostCur = H.obj("Cursor-Movement_Distance_C", { ["ref As Player Character"] = hostPC.Pawn,
+        K2_GetActorLocation = function() return { X = 910, Y = -390, Z = 100 } end,
+        ["Toggle Input"] = function(self, on)
+            handed[#handed + 1] = tostring(on)
+            if on then self["ref As Player Character"] = seller end     -- as the guest: player 0 is the guest
+        end })
+    cursors[2] = hostCur
+    UE.beginFrame()
+    GuestInput2.tickHost()
+    check("a drag cursor the guest's machine gave the host is handed to the guest",
+          handed[1] == "false" and handed[2] == "true" and hostCur["ref As Player Character"] == seller,
+          table.concat(handed, ", "))
+
+    -- A machine worked with the mouse pointer: its UI is the guest's own.
+    calls = {}
+    send(114, 0)
+    check("getting up on the guest gets them up on the host, the same way",
+          desk["In Machine Mode"] == false and calls[1] == "toggle false" and calls[2] == "stop out"
+          and calls[3] == "finish out" and Machines._seated()[guestKey] == nil, table.concat(calls, ", "))
+    calls = {}
+    send(114, 1, { X = 2000, Y = 0, Z = 90 })
+    check("a machine worked with the mouse pointer is left to the guest's own screen",
+          #calls == 0 and Machines._seated()[guestKey] == nil, table.concat(calls, ", "))
+
+    -- Sat down, then not heard from: got up on the host.
+    send(114, 1)
+    calls = {}
+    fakeNow = fakeNow + 11
+    UE.beginFrame()
+    GuestInput2.tickHost()
+    check("a seated guest not heard from for 10 s is got up on the host",
+          desk["In Machine Mode"] == false and calls[1] == "toggle false" and Machines._seated()[guestKey] == nil,
+          table.concat(calls, ", "))
+
+    UE.findAll, seller.K2_GetActorLocation = savedFindAll, savedSellerAt
+    Machines.reset()
+end
 
 -- The end-of-day summary is up on the host: about 4 s in, the game makes the
 -- front door usable again, and a guest shutting it would start a second end
@@ -3489,6 +3651,41 @@ check("the guest's summary closes the game's way and the new-day banner plays",
       mine ~= nil and mine.closed == true and b ~= nil and b.animated == true
       and b.txt_day.Text:ToString() == "Saturday 13", b and tostring(b.animated) or "no banner")
 
+-- REPORTED (16 Oct 2026): from day 2 on the guest woke up in the store. The
+-- morning puts only the host at the start zone; once the host is there, the
+-- guests go beside them, facing the same way.
+H.theWorld.NetDriver.ServerConnection = nil
+local hostPawnNow = UE.GetPawn()
+local hostAt = hostPawnNow and UE.vec(hostPawnNow:K2_GetActorLocation()) or { X = 0, Y = 0, Z = 0 }
+local zone = H.obj("Actor", { K2_GetActorLocation = function() return { X = hostAt.X + 50, Y = hostAt.Y, Z = hostAt.Z } end })
+gm["Actor Gatherer"] = H.obj("ActorGatherer_C", { ["PlayerStart Game Zone"] = zone })
+local movedTo, facedTo = nil, nil
+local sleepyPawn = H.obj("Player_Character_C", {
+    K2_GetActorLocation = function() return { X = 1846, Y = -1426, Z = 92 } end,
+    K2_TeleportTo = function(_, loc) movedTo = loc return true end,
+    GetActorEnableCollision = function() return true end,
+    GetGameTimeSinceCreation = function() return 900 end,
+    CharacterMovement = H.obj("CharacterMovementComponent", { __isActor = false, MovementMode = 1 }) })
+local sleepyPc = H.spawn("PlayerController", { Pawn = sleepyPawn,
+    IsLocalController = function() return false end,
+    SetViewTargetWithBlend = function() end,
+    ClientSetRotation = function(_, r) facedTo = r end })
+UE._resetLookups()
+UE.beginFrame()
+DayEnd.tickHost(7010)
+check("the new morning: a guest in the store is put beside the host at the start, facing their way",
+      movedTo ~= nil and math.abs(movedTo.X - hostAt.X) < 200 and math.abs(movedTo.Y - hostAt.Y) < 200
+      and facedTo ~= nil, movedTo and ("moved to %.0f,%.0f, faced %s"):format(movedTo.X, movedTo.Y,
+      tostring(facedTo)) or "not moved")
+movedTo = nil
+UE.beginFrame()
+DayEnd.tickHost(7012)
+check("and only once that morning", movedTo == nil, "moved again")
+for i, o in ipairs(H.world.objects["PlayerController"] or {}) do
+    if o == sleepyPc then table.remove(H.world.objects["PlayerController"], i) break end
+end
+gm["Actor Gatherer"] = nil
+
 H.theWorld.NetDriver.ServerConnection = nil
 H.world.objects["Core_Gamemode_C"] = savedGms
 for i, o in ipairs(H.world.objects["UI_NewDay_C"] or {}) do
@@ -3898,6 +4095,7 @@ local function later(s) fakeNow = fakeNow + (s or 1) end
 local exitSpot = H.obj("SceneComponent", { __isActor = false,
     K2_GetComponentLocation = function() return { X = 1500, Y = -900, Z = 4 } end })
 local computer = H.obj("ComputerScreen_C", { ["In Machine Mode"] = false,
+    ["Hide Cursor Interface while Using"] = true,      -- worked with the mouse pointer
     ["Prefered Location where player get out of Machine"] = exitSpot })
 UE.findAll = function(short)
     if short == "MachineActor_C" then return { computer } end
@@ -3939,6 +4137,67 @@ computer["In Machine Mode"] = false
 at = { X = 1520, Y = -860, Z = 92 }
 guestTick()
 check("a guest who got out at the machine's exit is left alone", #moves == 0, ("%d move(s)"):format(#moves))
+
+-- At a machine worked by looking around (the return desk) the host is told,
+-- and the guest's clicks go to the host (machines.lua); at the computer, whose
+-- UI is on the guest's screen, they stay there.
+do
+    local Machines = require("machines")
+    local deskG = H.obj("Return_C", { ["In Machine Mode"] = false, ["Hide Cursor Interface while Using"] = false,
+        ["Prefered Location where player get out of Machine"] = exitSpot,
+        K2_GetActorLocation = function() return { X = 900, Y = -400, Z = 90 } end })
+    UE.findAll = function(short)
+        if short == "MachineActor_C" then return { computer, deskG } end
+        return realFindAll(short)
+    end
+    local savedCam = hostPC.PlayerCameraManager
+    hostPC.PlayerCameraManager = H.obj("PlayerCameraManager", { __isActor = false,
+        GetCameraLocation = function() return { X = 880, Y = -420, Z = 150 } end,
+        GetCameraRotation = function() return { Pitch = -30, Yaw = 20, Roll = 0 } end })
+    local function sentSince(n, code)
+        for i = n + 1, #upSends do
+            local r = UE.field(upSends[i].rot, "Roll")
+            if r and math.abs(r - (100 + code)) < 0.01 then return upSends[i] end
+        end
+        return nil
+    end
+    local before = #upSends
+    deskG["In Machine Mode"] = true
+    guestTick()
+    local sat = sentSince(before, 14)
+    check("a guest sitting at the return desk tells the host which machine",
+          sat ~= nil and sat.loc.X == 900 and math.abs(UE.field(sat.rot, "Pitch") - 1) < 0.01,
+          sat and ("at %s, pitch %s"):format(tostring(sat.loc.X), tostring(UE.field(sat.rot, "Pitch"))) or "nothing sent")
+    before = #upSends
+    GuestInput2._onPress(1)
+    check("and its clicks there go to the host", sentSince(before, 1) ~= nil, ("%d sent"):format(#upSends - before))
+    before = #upSends
+    Machines.released()
+    check("letting go of the button there is sent too", sentSince(before, 15) ~= nil,
+          ("%d sent"):format(#upSends - before))
+    before = #upSends
+    deskG["In Machine Mode"] = false
+    at = { X = 1520, Y = -860, Z = 92 }
+    guestTick()
+    local up = sentSince(before, 14)
+    check("getting up from it is sent", up ~= nil and math.abs(UE.field(up.rot, "Pitch")) < 0.01,
+          up and tostring(UE.field(up.rot, "Pitch")) or "nothing sent")
+    local beforeSit = #upSends
+    computer["In Machine Mode"] = true
+    guestTick()
+    before = #upSends
+    GuestInput2._onPress(1)
+    check("at the computer (its UI on the guest's screen) clicks stay there, and the host is not told",
+          sentSince(before, 1) == nil and sentSince(beforeSit, 14) == nil, ("%d sent"):format(#upSends - beforeSit))
+    computer["In Machine Mode"] = false
+    guestTick()
+    hostPC.PlayerCameraManager = savedCam
+    UE.findAll = function(short)
+        if short == "MachineActor_C" then return { computer } end
+        return realFindAll(short)
+    end
+    Machines.reset()
+end
 
 -- Back to the store, on the guest: walking back on, and the host is asked.
 me.SetActorEnableCollision = function(self, on) self.collides = on end
@@ -4052,15 +4311,18 @@ H.hooks[ESC_CLASS .. ":Construct"]({ get = function() return menu end })
 check("nothing is added inside the hook", #box.kids == 4, ("%d children"):format(#box.kids))
 PauseMenu.tick(fakeNow)
 local order = {}
-for _, k in ipairs(box.kids) do order[#order + 1] = k.name or (k.text and "ours") or "?" end
-local ours = box.kids[3]
-check("\"Back to the store\" goes in above Return to menu, spaced like the others",
-      table.concat(order, ",") == "resume,options,ours,quit,last" and ours.text == "Back to the store"
-      and ours.padTop == 20 and menu.UX_Button_Quit.padTop == 20 and menu.TextBlock_lastSave.padTop == 10,
+for _, k in ipairs(box.kids) do
+    order[#order + 1] = k.name or (k.text == "Back to the store" and "back") or (k.text == "Character" and "character") or "?"
+end
+local charButton, ours = box.kids[3], box.kids[4]
+check("\"Character\" and \"Back to the store\" go in above Return to menu, spaced like the others",
+      table.concat(order, ",") == "resume,options,character,back,quit,last" and ours.text == "Back to the store"
+      and charButton.padTop == 20 and ours.padTop == 20 and menu.UX_Button_Quit.padTop == 20
+      and menu.TextBlock_lastSave.padTop == 10,
       table.concat(order, ",") .. " text=" .. tostring(ours and ours.text))
 H.hooks[ESC_CLASS .. ":Construct"]({ get = function() return menu end })
 PauseMenu.tick(fakeNow)
-check("a menu built again does not get a second one", #box.kids == 5, ("%d children"):format(#box.kids))
+check("a menu built again does not get a second one", #box.kids == 6, ("%d children"):format(#box.kids))
 
 -- Pressing it, on the host: by the register, and the menu closes.
 local spotComp = H.obj("SceneComponent", { __isActor = false,
@@ -4080,6 +4342,17 @@ check("pressing it on the host stands the host by the register and closes the me
       hostMoved ~= nil and hostMoved.X == 1700 and hostMoved.Y == -1500 and hostMoved.Z == 92 and menu.closed == 1,
       hostMoved and ("to (%s, %s, %s), closed %s"):format(tostring(hostMoved.X), tostring(hostMoved.Y),
        tostring(hostMoved.Z), tostring(menu.closed)) or "not moved")
+-- "Character": the menu closes, the character screen opens once it has.
+local CharacterMod = require("character")
+local realSoon, soon = CharacterMod.chooseSoon, 0
+CharacterMod.chooseSoon = function() soon = soon + 1 end
+hostMoved = nil
+H.hooks[CLICKED]({ get = function() return charButton end })
+PauseMenu.tick(fakeNow)
+CharacterMod.chooseSoon = realSoon
+check("pressing Character closes the menu and opens the character screen after it",
+      soon == 1 and menu.closed == 2 and hostMoved == nil,
+      ("screen asked %d time(s), closed %s, moved %s"):format(soon, tostring(menu.closed), tostring(hostMoved ~= nil)))
 
 -- A guest's Escape: the game's own needs a GameMode; this opens the same menu.
 check("Escape on the host is left to the game", (function()
@@ -4112,6 +4385,592 @@ UE.findAll = realFindAll
 os.clock = realClock
 GuestInput2.reset()
 PauseMenu.reset()
+UE._resetLookups()
+UE.beginFrame()
+end)()
+
+;(function()
+print("\n-- popcorn, slushies, cotton candy: made on a guest's screen, real on the host --")
+-- MEASURED (16 Oct 2026): the popcorn shovel follows the LOCAL mouse every
+-- tick and a full cup goes to player 0 a tick later, so a guest makes them on
+-- its own screen and the host makes the results real (concessions.lua).
+local Conc = require("concessions")
+local GuestInput3 = require("guestinput")
+local Chan = require("rpcchan")
+local upHook = H.hooks["/Script/Engine.PlayerController:ServerSetSpectatorLocation"]
+local downHook = H.hooks["/Script/Engine.PlayerController:ClientMessage"]
+UE.beginFrame()
+local hostPC = UE.GetPlayerController()
+local guestPC = nil
+for _, pc in ipairs(H.world.objects["PlayerController"] or {}) do
+    if pc ~= hostPC and pc.Player ~= nil and pc.IsValid(pc) then guestPC = pc break end
+end
+local realClock, realFindAll = os.clock, UE.findAll
+local realStatics, realWorld, realStaticFind = UE.GetGameplayStatics, UE.GetWorld, UE.staticFind
+local fakeNow = realClock() + 900
+os.clock = function() return fakeNow end
+local upSends = {}
+local savedUpSend = hostPC.ServerSetSpectatorLocation
+hostPC.ServerSetSpectatorLocation = function(_, l, r) upSends[#upSends + 1] = { loc = l, rot = r } end
+local savedHostPawn, savedGuestPawn = hostPC.Pawn, guestPC.Pawn
+-- RewindNative, as the host has it: the guest's actions are answered as the guest.
+local Native = require("native")
+Native._fake({
+    rt_version = function() return 2, "RewindNative (fake)" end,
+    rt_hook_return = function() return 0xD8 end,
+    rt_redirect_begin = function() return 0 end,
+    rt_redirect_end = function() return 2 end,
+    rt_unhook_all = function() return 0 end,
+    rt_stats = function() return 4, 0xD8, 0, 0 end,
+    rt_read_ptr = function() return nil end,
+})
+
+local function machine(level)
+    local m = H.obj("PopcornMachine_C", { ["Popcorn Fullness Normalize"] = level, ["In Machine Mode"] = false,
+        ["Hide Cursor Interface while Using"] = false,
+        K2_GetActorLocation = function() return { X = 1941, Y = -1426, Z = 90 } end,
+        ["Update Popcorn Fillness"] = function(self, d) self["Popcorn Fullness Normalize"] = self["Popcorn Fullness Normalize"] + d end })
+    m.GetFName = function() return FName("PopcornMachine_C_1") end      -- the level's name, the same on both
+    return m
+end
+local hostMachine, guestMachine = machine(0.6), machine(0.0)
+local onHost = true
+local cups, pawns = {}, {}
+UE.findAll = function(short)
+    if short == "PopcornMachine_C" then return { onHost and hostMachine or guestMachine } end
+    if short == "MachineActor_C" then return onHost and {} or { guestMachine } end
+    if short == "PopcornCup_C" then return cups end
+    if short == "SlushCup_C" or short == "CottonCandy_Stick_C" then return {} end
+    if short == "Player_Character_C" then return pawns end
+    return realFindAll(short)
+end
+local function asHost() onHost = true H.theWorld.NetDriver.ServerConnection = nil UE.beginFrame() end
+local function asGuestMachine() onHost = false
+    H.theWorld.NetDriver.ServerConnection = H.obj("NetConnection", { __isActor = false }) UE.beginFrame() end
+
+-- The host's level reaches the guest.
+asHost()
+sentStrings = {}
+Conc.tickHost(fakeNow)
+local wire = sentStrings[#sentStrings] or ""
+asGuestMachine()
+downHook(guestPC, wire)
+Chan.pump()
+check("the host's popcorn level reaches a guest's copy, the machine's own way",
+      math.abs(guestMachine["Popcorn Fullness Normalize"] - 0.6) < 0.001,
+      ("guest level %s, wire %s"):format(tostring(guestMachine["Popcorn Fullness Normalize"]), wire))
+
+-- The guest works the machine: its clicks stay on its screen, its level goes to the host.
+local guestPawn = H.obj("Player_Character_C", { GetAddress = function() return 0xC1 end,
+    K2_GetActorLocation = function() return { X = 1791, Y = -1426, Z = 92 } end })
+hostPC.Pawn = guestPawn
+pawns = { guestPawn }
+guestMachine["In Machine Mode"] = true
+fakeNow = fakeNow + 1
+GuestInput3.tickGuest()
+check("a guest at the popcorn machine keeps its clicks on its own screen (the host does not sit it down)",
+      GuestInput3.atScreenMachine() == true, "clicks would be sent")
+guestMachine["Popcorn Fullness Normalize"] = 0.3     -- two scoops
+upSends = {}
+fakeNow = fakeNow + 1
+UE.beginFrame()
+GuestInput3.tickGuest()
+local fillSend = nil
+for _, u in ipairs(upSends) do if math.floor(u.rot.Roll + 0.5) == 117 then fillSend = u end end
+check("the level the guest's game has goes to the host", fillSend ~= nil and math.abs(fillSend.rot.Yaw - 30) < 0.01,
+      fillSend and ("yaw %s"):format(tostring(fillSend.rot.Yaw)) or "nothing sent")
+asHost()
+local hostGuestPawn = H.obj("Player_Character_C", { GetAddress = function() return 0xC2 end,
+    K2_GetActorLocation = function() return { X = 1791, Y = -1426, Z = 92 } end })
+guestPC.Pawn = hostGuestPawn
+if fillSend then
+    upHook(guestPC, fillSend.loc, fillSend.rot)
+    Chan.pump()
+end
+check("and the host's machine follows it", math.abs(hostMachine["Popcorn Fullness Normalize"] - 0.3) < 0.001,
+      tostring(hostMachine["Popcorn Fullness Normalize"]))
+
+-- The guest's game hands it its own (unreal) cup: put away, the host makes a real one.
+asGuestMachine()
+hostPC.Pawn = guestPawn
+guestMachine["In Machine Mode"] = false
+local standIn = H.obj("PopcornCup_C", { Role = 3, ["Fill Percentage Alpha"] = 1.0,
+    K2_DestroyActor = function(self) self.__dead = true end })
+guestPawn["Object Hold"] = standIn
+guestPawn["Set Object Hold"] = function(self, v) self["Object Hold"] = v end
+upSends = {}
+fakeNow = fakeNow + 1
+UE.beginFrame()
+GuestInput3.tickGuest()
+local giveSend = nil
+for _, u in ipairs(upSends) do if math.floor(u.rot.Roll + 0.5) == 118 then giveSend = u end end
+check("a cup the guest's own game made is put away and the host is told",
+      giveSend ~= nil and standIn.__dead == true and guestPawn["Object Hold"] == nil,
+      ("sent %s, put away %s"):format(tostring(giveSend ~= nil), tostring(standIn.__dead)))
+-- The host makes it.
+asHost()
+local made, picked = nil, nil
+local CUP = "/Game/VideoStore/asset/prop/Popcorn/PopcornCup.PopcornCup_C"
+UE.staticFind = function(path) if path == CUP then return H.obj("Class", { __isActor = false }) end return realStaticFind(path) end
+UE.GetWorld = function() return H.theWorld end
+UE.GetGameplayStatics = function()
+    return H.obj("GameplayStatics", { __isActor = false,
+        BeginDeferredActorSpawnFromClass = function()
+            made = H.obj("PopcornCup_C", { ["Fill Percentage Alpha"] = 0.0,
+                ["Fill Popcorn"] = function(self, a) self["Fill Percentage Alpha"] = self["Fill Percentage Alpha"] + a end,
+                ["Set can be pick up"] = function() end,
+                SetActorEnableCollision = function() end,
+                Pickup = function(_, who) picked = who end })
+            return made
+        end,
+        FinishSpawningActor = function() end })
+end
+if giveSend then
+    upHook(guestPC, giveSend.loc, giveSend.rot)
+    Chan.pump()
+end
+check("the host puts a real, full cup in the guest's hands, as the guest",
+      made ~= nil and made["Fill Percentage Alpha"] == 1.0 and made["Stocked in Machine"] == false
+      and picked == hostGuestPawn, made and ("fill %s, picked by guest %s"):format(tostring(made["Fill Percentage Alpha"]),
+      tostring(picked == hostGuestPawn)) or "nothing made")
+if giveSend then upHook(guestPC, giveSend.loc, giveSend.rot) Chan.pump() end
+check("one cup, though the action arrives twice", Conc._stats().given == 1, ("%d made"):format(Conc._stats().given))
+
+-- On the guest the real cup (the host's, replicated) shows as full as it is there.
+hostGuestPawn["Object Hold"] = made
+hostGuestPawn.PlayerState = H.obj("PlayerState", { __isActor = false, PlayerId = 259 })
+pawns = { hostGuestPawn }
+sentStrings = {}
+fakeNow = fakeNow + 5
+Conc.tickHost(fakeNow)
+wire = sentStrings[#sentStrings] or ""
+asGuestMachine()
+local real = H.obj("PopcornCup_C", { Role = 1, ["Fill Percentage Alpha"] = 0.0,
+    ["Fill Popcorn"] = function(self, a) self["Fill Percentage Alpha"] = self["Fill Percentage Alpha"] + a end })
+local hand = H.obj("SceneComponent", { __isActor = false, GetNumChildrenComponents = function() return 1 end,
+    GetChildComponent = function() return H.obj("StaticMeshComponent", { __isActor = false, GetOwner = function() return real end }) end })
+guestPawn["AttachObject Socket"] = hand
+guestPawn.PlayerState = H.obj("PlayerState", { __isActor = false, PlayerId = 259 })
+pawns = { guestPawn }
+cups = { real }
+downHook(guestPC, wire)
+Chan.pump()
+fakeNow = fakeNow + 1
+UE.beginFrame()
+GuestInput3.tickGuest()
+check("the guest's copy of the real cup is shown as full as the host says",
+      real["Fill Percentage Alpha"] == 1.0, ("fill %s, wire %s"):format(tostring(real["Fill Percentage Alpha"]), wire))
+
+-- Leave everything as it was.
+H.theWorld.NetDriver.ServerConnection = nil
+hostPC.Pawn, guestPC.Pawn = savedHostPawn, savedGuestPawn
+hostPC.ServerSetSpectatorLocation = savedUpSend
+UE.findAll, UE.GetGameplayStatics, UE.GetWorld, UE.staticFind = realFindAll, realStatics, realWorld, realStaticFind
+os.clock = realClock
+Native._fake(nil)
+Conc.reset()
+GuestInput3.reset()
+UE._resetLookups()
+UE.beginFrame()
+end)()
+
+;(function()
+do
+print("\n-- the store's screen machines on a guest: catalogue, expansion map, sidewalk sign, level board --")
+-- MEASURED (16 Oct 2026, the research in docs/MULTIPLAYER-AUDIT.md): on a guest
+-- every catalogue card stayed under its level cover and a Buy did nothing; the
+-- expansion map read "Text Block" / "9999$"; a guest's sidewalk-sign pick
+-- changed only its own copy. The host's own machines do the guest's choices.
+local UIM = require("uimachines")
+local upHook = H.hooks["/Script/Engine.PlayerController:ServerSetSpectatorLocation"]
+local downHook = H.hooks["/Script/Engine.PlayerController:ClientMessage"]
+local T = { ordered = {}, rooms = {}, ups = {}, real = {} }
+UE.beginFrame()
+local hostPC = UE.GetPlayerController()
+local guestPC = nil
+for _, pc in ipairs(H.world.objects["PlayerController"] or {}) do
+    if pc ~= hostPC and pc.Player ~= nil and pc.IsValid(pc) then guestPC = pc break end
+end
+T.real.findAll, T.real.findFirst, T.real.findObject = UE.findAll, UE.findFirst, UE.findObject
+T.real.gm, T.real.clock, T.real.send = UE.GetGameMode, os.clock, hostPC.ServerSetSpectatorLocation
+T.real.mirrored = require("sync").mirroredState
+T.now = T.real.clock() + 7000
+os.clock = function() return T.now end
+hostPC.ServerSetSpectatorLocation = function(_, l, r) T.ups[#T.ups + 1] = { loc = l, rot = r } end
+require("native")._fake({
+    rt_version = function() return 2, "RewindNative (fake)" end,
+    rt_hook_return = function() return 0xD8 end,
+    rt_redirect_begin = function() return 0 end,
+    rt_redirect_end = function() return 2 end,
+    rt_unhook_all = function() return 0 end,
+    rt_stats = function() return 4, 0xD8, 0, 0 end,
+    rt_read_ptr = function() return nil end,
+})
+local function param(v) return { get = function() return v end } end
+local function class(name, props)
+    local c = H.obj("BlueprintGeneratedClass", { __isActor = false })
+    c.GetFName = function() return FName(name) end
+    local cdo = H.obj(name, { __isActor = false })
+    for k, v in pairs(props) do cdo[k] = v end
+    c.GetCDO = function() return cdo end
+    return c
+end
+local function onScreen(widget, short, fields)
+    local wc = H.obj("WidgetComponent", { __isActor = false, GetUserWidgetObject = function() return widget end })
+    fields = fields or {}
+    fields.Widget = wc
+    return H.obj(short, fields)
+end
+T.poster = class("PosterFrame_C", { ["Unlock Level"] = 0, ["Product Price"] = 35.0 })
+T.arcade = class("Arcade_A_C", { ["Unlock Level"] = 30, ["Product Price"] = 900.0 })
+T.spawner = H.obj("SpawnerByType_C", { __isActor = false, ["Spawn ID Location"] = 0 })
+local function catalogueWidget()
+    return H.obj("UI_Catalogue_Widget_C", { __isActor = false, ["Spawner Ref"] = T.spawner,
+        ["Return Catalogue Container product class"] = function() end,
+        ["Return Catalogue Equipmement product class"] = function() end,
+        ["Return Catalogue Decoration product class"] = function(_, out) out[1] = param(T.poster) out[2] = param(T.arcade) end,
+        ["Market - Click on Button Product Event"] = function(_, card, cls, pennies)
+            T.ordered[#T.ordered + 1] = { card = card, cls = cls, pennies = pennies }
+            T.spawner["Spawn ID Location"] = (T.spawner["Spawn ID Location"] + 1) % 3
+        end,
+        ["Play Payment Sound"] = function() T.paid = (T.paid or 0) + 1 end })
+end
+T.hostW = catalogueWidget()
+T.hostCatalogue = onScreen(T.hostW, "Catalogue_C")
+-- The expansion map: room 3 is the host's "StoreExpansion_C_7".
+T.expansion = H.obj("StoreExpansion_C", { Unlocked = false, Price = 500000 })
+T.expansion.GetFName = function() return FName("StoreExpansion_C_7") end
+T.sector = H.obj("UI_StoreExpansion_Sector_C", { __isActor = false, ["Store Expansion ID"] = 3,
+    ["Store Expansion Ref"] = T.expansion })
+T.mapW = H.obj("UI_StoreExpansion_Widget_C", { __isActor = false, UI_StoreExpansion_Sector_3 = T.sector,
+    ["Click Map Button Event"] = function(_, sector, ref)
+        T.rooms[#T.rooms + 1] = { sector = sector, ref = ref }
+        ref.Unlocked = true
+    end })
+T.hostMap = onScreen(T.mapW, "StoreExpansion_Machine_C")
+T.hostSign = H.obj("SidewalkSign_C", { ["Sale Type"] = 1, ["Set Sale Type"] = function(self, v) self["Sale Type"] = v end })
+T.gm = H.obj("Core_Gamemode_C", { Money = 10000000, Level = 12 })
+T.onHost = true
+UE.GetGameMode = function() return T.onHost and T.gm or nil end
+UE.findFirst = function(short)
+    if short == "Catalogue_C" then return T.onHost and T.hostCatalogue or T.guestCatalogue end
+    if short == "StoreExpansion_Machine_C" then return T.onHost and T.hostMap or T.guestMap end
+    if short == "SidewalkSign_C" then return T.onHost and T.hostSign or T.guestSign end
+    return T.real.findFirst(short)
+end
+UE.findAll = function(short)
+    if short == "StoreExpansion_C" then return { T.onHost and T.expansion or T.guestExpansion } end
+    if short == "StoreLevel_Machine_C" then return T.onHost and {} or { T.board } end
+    return T.real.findAll(short)
+end
+local function asHost() T.onHost = true H.theWorld.NetDriver.ServerConnection = nil UE.beginFrame() end
+local function asGuest() T.onHost = false
+    H.theWorld.NetDriver.ServerConnection = H.obj("NetConnection", { __isActor = false }) UE.beginFrame() end
+T.real.guestPawn, T.real.guestAddr, T.real.hostAddr = guestPC.Pawn, guestPC.GetAddress, hostPC.GetAddress
+guestPC.GetAddress = guestPC.GetAddress or function() return 0xE300 end      -- the guest window needs both
+hostPC.GetAddress = hostPC.GetAddress or function() return 0xE400 end
+guestPC.Pawn = H.obj("Player_Character_C", { GetAddress = function() return 0xE200 end,
+    K2_GetActorLocation = function() return { X = 2300, Y = -1550, Z = 92 } end })
+T.real.hostPawn, T.real.hostCam, T.real.guestCam = hostPC.Pawn, hostPC.PlayerCameraManager, guestPC.PlayerCameraManager
+hostPC.Pawn = H.obj("Player_Character_C", { GetAddress = function() return 0xE500 end })
+hostPC.PlayerCameraManager, guestPC.PlayerCameraManager = nil, nil
+local function act(code, x, y, z, seq)
+    asHost()
+    T.now = T.now + 1          -- the channel folds one guest's same action inside 0.04 s into one
+    upHook(guestPC, { X = x, Y = y, Z = z }, UE.rotArg({ Pitch = seq or 0, Yaw = 0, Roll = 100 + code }))
+    require("rpcchan").pump()
+    UIM.tickHost(T.now)
+end
+local function lastAnswer()
+    for i = #sentStrings, 1, -1 do if sentStrings[i]:find("uimres", 1, true) then return sentStrings[i] end end
+    return ""
+end
+
+-- A guest orders the poster frame (decorations page, first card): the host's
+-- own catalogue places it, and the guest is told.
+sentStrings = {}
+act(21, 1, 3001, 3500, 7)
+check("a guest's catalogue order is placed by the host's own catalogue: that product, that price, no card made",
+      #T.ordered == 1 and T.ordered[1].cls == T.poster and T.ordered[1].pennies == 3500 and T.ordered[1].card == nil,
+      ("%d placed%s"):format(#T.ordered, T.ordered[1] and (", " .. tostring(T.ordered[1].pennies)) or ""))
+check("and the guest hears it went through", lastAnswer():find("ok=1", 1, true) ~= nil, lastAnswer())
+act(21, 1, 3001, 3500, 7)
+check("the same order number again (the channel sends each twice) is not a second order", #T.ordered == 1,
+      ("%d placed"):format(#T.ordered))
+-- The arcade unlocks at level 30; the store is at 12.
+act(21, 1, 3002, 90000, 8)
+check("a product above the store's level is refused, and the guest is told why",
+      #T.ordered == 1 and lastAnswer():find("level 30", 1, true) ~= nil, lastAnswer())
+
+-- A room on the map: what a click on it does on the host's own map.
+act(20, 3, 0, 0, 9)
+check("a guest's room on the expansion map is bought by the host's own map, with the game's own room and expansion",
+      #T.rooms == 1 and T.rooms[1].sector == T.sector and T.rooms[1].ref == T.expansion
+      and lastAnswer():find("ok=1", 1, true) ~= nil, ("%d room(s); %s"):format(#T.rooms, lastAnswer()))
+
+-- The sidewalk sign: a guest's ad is the store's ad.
+act(19, 4, 0, 0, 0)
+check("a guest's sidewalk-sign ad goes up on the host's sign", T.hostSign["Sale Type"] == 4,
+      tostring(T.hostSign["Sale Type"]))
+
+-- What the guests' copies need: the ad, and which expansion each room is.
+asHost()
+sentStrings = {}
+T.now = T.now + 30
+UIM.tickHost(T.now)
+local state = nil
+for _, s in ipairs(sentStrings) do if s:find("uim|", 1, true) then state = s end end
+check("the host tells the guests its sign's ad and its map's rooms",
+      state ~= nil and state:find("ss=4", 1, true) ~= nil and state:find("x3=StoreExpansion_C_7", 1, true) ~= nil,
+      tostring(state))
+
+-- The guest: the host's ad on its own sign, its own map linked to its own
+-- copies of the expansions, the level board at the store's level.
+T.guestSign = H.obj("SidewalkSign_C", { ["Sale Type"] = 1, ["In Machine"] = false,
+    ["Set Sale Type"] = function(self, v) self["Sale Type"] = v end })
+T.guestExpansion = H.obj("StoreExpansion_C", { Unlocked = false })
+T.guestExpansion.GetFName = function() return FName("StoreExpansion_C_7") end
+T.guestSector = H.obj("UI_StoreExpansion_Sector_C", { __isActor = false, ["Store Expansion ID"] = 3,
+    ["Set Reference And Construct"] = function(self, e) self["Store Expansion Ref"] = e end })
+T.guestMap = onScreen(H.obj("UI_StoreExpansion_Widget_C", { __isActor = false, UI_StoreExpansion_Sector_3 = T.guestSector }),
+                      "StoreExpansion_Machine_C")
+T.board = H.obj("StoreLevel_Machine_C", {
+    ["Set the crossmark location"] = function(self, level, page) self.mark = { level, page } end,
+    ["Update New Movie Genre Postit"] = function(self, level) self.postits = level end })
+require("sync").mirroredState = function() return { Level = 12 } end
+asGuest()
+if state then downHook(guestPC, state) end
+require("rpcchan").pump()
+T.now = T.now + 5
+UIM.tickGuest(T.now)
+check("a guest's sidewalk sign shows the host's ad", T.guestSign["Sale Type"] == 4, tostring(T.guestSign["Sale Type"]))
+check("a guest's expansion map is linked to the guest's own copy of each room's expansion, the game's own way",
+      T.guestSector["Store Expansion Ref"] == T.guestExpansion,
+      tostring(T.guestSector["Store Expansion Ref"]))
+check("the level board's cross-mark and post-its are at the store's level",
+      T.board.mark ~= nil and T.board.mark[1] == 12 and T.board.mark[2] == 0 and T.board.postits == 12,
+      T.board.mark and ("%s, page %s"):format(tostring(T.board.mark[1]), tostring(T.board.mark[2])) or "not drawn")
+-- The guest picks an ad at its own sign: sent to the host, not undone.
+T.guestSign["In Machine"] = true
+T.guestSign["Sale Type"] = 2
+T.ups = {}
+T.now = T.now + 1
+UIM.tickGuest(T.now)
+local adSent = nil
+for _, u in ipairs(T.ups) do if math.floor(u.rot.Roll + 0.5) == 119 then adSent = u end end
+check("a guest's own pick at its sign goes to the host, and stays while the host agrees",
+      adSent ~= nil and math.floor(adSent.loc.X + 0.5) == 2 and T.guestSign["Sale Type"] == 2,
+      adSent and tostring(adSent.loc.X) or "nothing sent")
+
+-- A Buy on the guest's own catalogue card: an order with its page, place and price.
+T.box = H.obj("WrapBox", { __isActor = false })
+T.card = H.obj("UI_Catalogue_Product_C", { __isActor = false, GetParent = function() return T.box end })
+T.box.GetChildIndex = function(_, c) return c == T.card and 1 or -1 end
+T.guestW = catalogueWidget()
+T.guestW.Decoration_WrapBox = T.box
+T.guestCatalogue = onScreen(T.guestW, "Catalogue_C")
+UE.findObject = function(path) if path == UE.pathOf(T.card) then return T.card end return T.real.findObject(path) end
+local productHook = "/Game/VideoStore/asset/prop/catalogue/UI_Catalogue_Widget.UI_Catalogue_Widget_C:Market - Click on Button Product Event"
+H.staticObjects[productHook] = H.obj("Function", { __isActor = false, GetAddress = function() return 0xE100 end })
+T.now = T.now + 10
+UIM.tickGuest(T.now)       -- hooks what has loaded
+T.ups = {}
+if H.hooks[productHook] then H.hooks[productHook]({ get = function() return T.guestW end }, param(T.card), param(T.arcade), param(90000)) end
+UIM.tickGuest(T.now)
+local order = nil
+for _, u in ipairs(T.ups) do if math.floor(u.rot.Roll + 0.5) == 121 then order = u end end
+check("a Buy on a guest's catalogue card becomes an order: decorations, second card, its price",
+      order ~= nil and math.floor(order.loc.X + 0.5) == 1 and math.floor(order.loc.Y + 0.5) == 3002
+      and math.floor(order.loc.Z + 0.5) == 90000,
+      order and ("%s %s %s"):format(tostring(order.loc.X), tostring(order.loc.Y), tostring(order.loc.Z)) or "nothing sent")
+
+-- The store's name: the guest's own editor writes its own sign; when it
+-- closes, the sign goes to the host (one name on character.lua's route), and
+-- the host's sign takes it the way its editor does.
+T.font = H.obj("Font", { __isActor = false })
+T.font.GetFName = function() return FName("Reglo") end
+T.ui = H.obj("UI_StoreName_C", { __isActor = false, IsInViewport = function() return T.uiOpen == true end })
+T.guestName = H.obj("StoreName_C", { Name = FText("Rewind Palace"), Color = { R = 0.1, G = 0.2, B = 0.3, A = 1.0 },
+    ["Front Store Light Color"] = { R = 0, G = 0, B = 1, A = 1 }, ["Sign Store Light Color"] = { R = 1, G = 0, B = 0, A = 1 },
+    Font = T.font, ["UI Store"] = T.ui })
+T.hostName = H.obj("StoreName_C", { Name = FText("VIDEO KING"), Color = { R = 1, G = 1, B = 1, A = 1 },
+    ["Set StoreName Visual"] = function(self) self.drawn = (self.drawn or 0) + 1 end })
+T.realFirst2 = UE.findFirst
+UE.findFirst = function(short)
+    if short == "StoreName_C" then return T.onHost and T.hostName or T.guestName end
+    return T.realFirst2(short)
+end
+T.names = {}
+T.realNotify = hostPC.ServerNotifyLoadedWorld
+hostPC.ServerNotifyLoadedWorld = function(_, n) T.names[#T.names + 1] = n:ToString() end
+asGuest()
+T.uiOpen = true
+UIM.tickGuest(T.now)
+check("while a guest's sign editor is up, the host's sign is not put back over it",
+      UIM.holdSign() == true, "it would be")
+T.uiOpen = false
+UIM.tickGuest(T.now)
+check("when it closes, the guest's sign goes to the host as one name: name in hex, colours, font",
+      #T.names == 1 and T.names[1]:sub(1, 5) == "RTSN:" and T.names[1]:find("52657769", 1, true) ~= nil
+      and T.names[1]:find("Reglo", 1, true) ~= nil, tostring(T.names[1]))
+asHost()
+local notify = H.hooks["/Script/Engine.PlayerController:ServerNotifyLoadedWorld"]
+if notify and T.names[1] then
+    notify({ get = function() return guestPC end }, { get = function() return FName(T.names[1]) end })
+end
+require("character").tick(T.now)
+check("and the host's sign takes it as its own editor would (colour, then drawn again)",
+      T.hostName.drawn == 1 and T.hostName.Color.B == 0.3, ("drawn %s, colour B %s"):format(tostring(T.hostName.drawn),
+      tostring(T.hostName.Color and T.hostName.Color.B)))
+hostPC.ServerNotifyLoadedWorld = T.realNotify
+UE.findFirst = T.realFirst2
+
+-- Leave everything as it was.
+H.staticObjects[productHook] = nil
+UIM.reset()
+UE.findAll, UE.findFirst, UE.findObject, UE.GetGameMode = T.real.findAll, T.real.findFirst, T.real.findObject, T.real.gm
+os.clock, hostPC.ServerSetSpectatorLocation = T.real.clock, T.real.send
+require("sync").mirroredState = T.real.mirrored
+guestPC.Pawn, guestPC.GetAddress, hostPC.GetAddress = T.real.guestPawn, T.real.guestAddr, T.real.hostAddr
+hostPC.Pawn, hostPC.PlayerCameraManager, guestPC.PlayerCameraManager = T.real.hostPawn, T.real.hostCam, T.real.guestCam
+asHost()
+end
+
+print("\n-- choosing your character: made on the character screen, kept, worn everywhere --")
+-- REQUESTED (16 Oct 2026): "can we give people the option to choose their
+-- character", then "show all possible characters". A guest's choice crosses to
+-- the host as a few FNames over ServerNotifyLoadedWorld (character.lua says why).
+local Character = require("character")
+local Creator = require("creator")
+local Bodies5 = require("bodies")
+local FILE = "RewindTogether.character-smoke.txt"
+Character._setFile(FILE)
+local realFindAll, realFindObject = UE.findAll, UE.findObject
+UE.beginFrame()
+local hostPC = UE.GetPlayerController()
+local guestPC = nil
+for _, pc in ipairs(H.world.objects["PlayerController"] or {}) do
+    if pc ~= hostPC and pc.Player ~= nil and pc.IsValid(pc) then guestPC = pc break end
+end
+
+-- The model: the game's 14 named regulars, every body's own clothes, the
+-- look made by each mesh's slots BY NAME.
+local presets = Creator.presets()
+check("the character screen offers the game's 14 named regulars", #presets == 14,
+      ("%d: %s"):format(#presets, presets[1] and presets[1].name or "-"))
+local function material(path)
+    local m = H.obj("MaterialInstanceConstant", { __isActor = false })
+    m.GetFullName = function() return "MaterialInstanceConstant " .. path end    -- H.obj sets its own
+    return m
+end
+local function slotsArray(names)
+    return { ForEach = function(_, fn)
+        for i, n in ipairs(names) do
+            fn(i, { get = function() return { MaterialSlotName = FName(n),
+                MaterialInterface = material("/Game/T/MI_" .. n .. ".MI_" .. n) } end })
+        end
+    end }
+end
+local bodyNames = { "Skin", "ClothTop", "ClothBottom", "ClothShoes", "Hair", "Mouth", "EyeL", "EyeR" }
+local function staticMesh()
+    local slots = { "ClothTop", "Hair" }
+    local o = H.obj("StaticMesh", { __isActor = false,
+        GetMaterialIndex = function(_, n) for i, x in ipairs(slots) do if x == n:ToString() then return i - 1 end end return -1 end,
+        GetMaterial = function(_, i)
+            if i >= #slots then return nil end
+            return material("/Game/T/MI_Head" .. i .. ".MI_Head" .. i)
+        end })
+    return o
+end
+UE.findObject = function(path)
+    if path:find("/SK_CHA_") then
+        return H.obj("SkeletalMesh", { __isActor = false, Materials = slotsArray(bodyNames) })
+    end
+    if path:find("/mesh/hair/") or path:find("_Hair_") or path:find("Glasses") or path:find("Hat") then
+        return staticMesh()
+    end
+    return realFindObject(path)
+end
+local realClassName = UE.ClassNameOf
+UE.ClassNameOf = function(o)
+    if type(o) == "table" and o.__class then return o.__class end
+    return realClassName(o)
+end
+local dorothy = presets[1]
+local look = Creator.compose(Creator.copy(dorothy.spec))
+check("a regular's look: her body, her own clothes untinted, her hair colour on the brows",
+      look ~= nil and look.m:find("SK_CHA_F_01") ~= nil and look.s1:find("NPC_Punk_Shirt_01_bc") ~= nil
+      and look.s1:find("1.000,1.000,1.000", 1, true) ~= nil and look.s4:find("MI_CHA_Hair_Purple") ~= nil
+      and look.cs == "0.900", look and ("m %s | s1 %s | s4 %s | cs %s"):format(look.m, look.s1, look.s4, look.cs) or "no look")
+check("and her hair, its own materials slot by slot, the hair part in her colour",
+      look ~= nil and (look.hm or ""):find("MI_Head0", 1, true) ~= nil and (look.hm or ""):find("MI_CHA_Hair_Purple", 1, true) ~= nil,
+      look and tostring(look.hm) or "no look")
+local spec = Creator.copy(dorothy.spec)
+Creator.step(spec, "body", 1)
+local fits = true
+for _, row in ipairs({ "top", "bottom", "shoes", "hair" }) do
+    local ok = false
+    for _, v in ipairs(Creator.choices(spec, row)) do if v == spec[row] then ok = true end end
+    fits = fits and ok
+end
+check("a new body keeps only what fits it (the clothes are made per body)", fits and spec.body ~= dorothy.spec.body,
+      ("body %s"):format(tostring(spec.body)))
+local randomOk = true
+for _ = 1, 20 do
+    local r = Creator.random()
+    local l = Creator.compose(r)
+    randomOk = randomOk and l ~= nil and (l.s1 or ""):match("^[^|]*|[^|]+|") ~= nil and Bodies5.isLook(l)
+end
+check("RANDOM makes characters the way the game makes passers-by - every one wearable", randomOk,
+      "a random one would not dress")
+local fields = Creator.toFields(spec)
+local back = Creator.fromFields(fields)
+check("the choices are kept with the look, and come back the same", back ~= nil and back.body == spec.body
+      and back.top == spec.top and back.height == spec.height, back and back.body or "nil")
+UE.ClassNameOf = realClassName
+
+-- A guest makes one: kept, and sent to the host as a few names.
+local savedCam = hostPC.PlayerCameraManager
+local names = {}
+local savedNotify = hostPC.ServerNotifyLoadedWorld
+hostPC.ServerNotifyLoadedWorld = function(_, n) names[#names + 1] = n:ToString() end
+H.theWorld.NetDriver.ServerConnection = H.obj("NetConnection", { __isActor = false })
+UE.beginFrame()
+Character._wear(look, Creator.copy(dorothy.spec))
+local fromFile, specFromFile = Character._load()
+check("DONE: the look and its choices are kept in a file for every game",
+      fromFile ~= nil and fromFile.m == look.m and fromFile.s1 == look.s1 and specFromFile ~= nil
+      and specFromFile.top == dorothy.spec.top, fromFile and ("file m=%s"):format(tostring(fromFile.m)) or "nothing saved")
+check("and goes to the host as a few names, each short enough for one",
+      #names >= 2 and names[1]:sub(1, 5) == "RTLK:" and #names[1] <= 1023,
+      ("%d name(s), first %d chars"):format(#names, names[1] and #names[1] or 0))
+
+-- The host puts them together and dresses that guest in it.
+H.theWorld.NetDriver.ServerConnection = nil
+guestPC.PlayerState = H.obj("PlayerState", { __isActor = false, PlayerId = 261 })
+local hook = H.hooks["/Script/Engine.PlayerController:ServerNotifyLoadedWorld"]
+UE.beginFrame()
+for i = #names, 1, -1 do       -- in any order
+    hook({ get = function() return guestPC end }, { get = function() return FName(names[i]) end })
+end
+Character.tick(os.clock())
+local worn = Bodies5.lookOf(261)
+check("the host puts the pieces together and that guest looks so to everyone",
+      worn ~= nil and worn.m == look.m and worn.s1 == look.s1, worn and tostring(worn.m) or "no look for them")
+hook({ get = function() return guestPC end }, { get = function() return FName("/Game/Maps/L_Player_Store_01") end })
+Character.tick(os.clock())
+check("a real ServerNotifyLoadedWorld is left alone", #Character._inbox() == 0, "queued")
+
+-- Leave everything as it was.
+os.remove(FILE)
+Character._setFile("RewindTogether.character.txt")
+Character.reset()
+UE.findAll, UE.findObject = realFindAll, realFindObject
+hostPC.PlayerCameraManager = savedCam
+hostPC.ServerNotifyLoadedWorld = savedNotify
+guestPC.PlayerState = nil
+H.theWorld.NetDriver.ServerConnection = nil
+Bodies5.reset()
 UE._resetLookups()
 UE.beginFrame()
 end)()
@@ -4467,6 +5326,7 @@ local inst = H.obj("AnimBP_Base_C", { __isActor = false, Speed = 0.0 })
 local mesh = H.obj("SkeletalMeshComponent", { __isActor = false,
     GetAnimInstance = function() return inst end,
     SetSkinnedAssetAndUpdate = function(self, a) swapped = a self.SkeletalMeshAsset = a end,
+    SetRelativeScale3D = function(self, v) self.sized = v end,
     GetMaterial = function() return nil end,
     GetMaterialIndex = function() return -1 end,
     CreateDynamicMaterialInstance = function(_, i, parent)
@@ -4512,7 +5372,7 @@ end
 Chan.installReceiver()
 local look = { p = "7", m = BODY,
     s1 = "/Game/VideoStore/asset/character/Test/MI_Top.MI_Top|/Game/VideoStore/asset/character/Test/T_Top.T_Top|0.5,0.2,0.1",
-    h = HAIR, hm = "", f = "", a = "" }
+    h = HAIR, hm = "", f = "", a = "", cs = "0.900" }
 H.hooks["/Script/Engine.PlayerController:ClientMessage"](hostPC, P2P.encode("plook", look))
 Chan.pump()
 local key = other:GetFullName()
@@ -4538,7 +5398,7 @@ check("what they carry goes in their hands (right hand, the stack in the left)",
       ("hand %s, stack %s"):format(tostring(hand.sock), tostring(stack.sock)))
 check("the borrowed animation blueprint is told how fast they walk (it cannot find out itself)",
       inst.Speed == 300 and math.abs((inst["Scale Character Play Rate"] or 0) - 300 / 144) < 1e-6
-      and inst["Is Holding Something"] == false,
+      and inst["Is Holding Something"] == false and inst["Rotation Delta Z Normalize"] == 0.5,
       ("Speed %s, rate %s, holding %s"):format(tostring(inst.Speed), tostring(inst["Scale Character Play Rate"]),
       tostring(inst["Is Holding Something"])))
 -- Picking something up: the hand socket has a child, and the host's first-person
@@ -4550,6 +5410,11 @@ check("carrying: the carrying pose, and the socket stays on the hand",
       inst["Is Holding Something"] == true and hand.RelativeLocation.X == 0 and hand.RelativeLocation.Z == 0,
       ("holding %s, socket at %s,%s"):format(tostring(inst["Is Holding Something"]),
       tostring(hand.RelativeLocation.X), tostring(hand.RelativeLocation.Z)))
+check("their height: the body sized as the town sizes its people, its legs stepping to it",
+      mesh.sized ~= nil and math.abs(mesh.sized.Z - 0.9) < 1e-6
+      and math.abs((inst["Scale Character Play Rate"] or 0) - 300 / (144 * 0.9)) < 1e-6,
+      ("scale %s, rate %s"):format(mesh.sized and tostring(mesh.sized.Z) or "never set",
+      tostring(inst["Scale Character Play Rate"])))
 local wornBefore = #mids
 UE.beginFrame()
 Bodies3.tick(os.clock() + 5010)
@@ -4560,6 +5425,221 @@ UE.findAll = realFindAll
 H.theWorld.NetDriver.ServerConnection = nil
 Bodies3.reset()
 UE._resetLookups()
+UE.beginFrame()
+end)()
+
+-- REPORTED (16 Oct 2026): "why do the player pawns move in circles". A
+-- remote body faced wherever its player looked, so it spun as they looked
+-- around. Now: the head follows the view, the body turns only past 60
+-- degrees (or walking), every frame from the pawns' own tick.
+;(function()
+print("\n-- other players' bodies turn like people, not with every look --")
+local Bodies4 = require("bodies")
+local realFindAll, realPcs, realClock = UE.findAll, UE.GetAllPlayerControllers, os.clock
+UE.beginFrame()
+local hostPC = UE.GetPlayerController()
+local savedPawn = hostPC.Pawn
+local fake = 9000.0
+os.clock = function() return fake end
+local inst = H.obj("AnimBP_Base_C", { __isActor = false })
+local direct = 0
+local mesh = H.obj("SkeletalMeshComponent", { __isActor = false,
+    RelativeRotation = { Pitch = 0, Yaw = -90, Roll = 0 },
+    GetAnimInstance = function() return inst end,
+    K2_SetRelativeRotation = function(self, r) direct = direct + 1 self.RelativeRotation = r end })
+local root = H.obj("CapsuleComponent", { __isActor = false,
+    RelativeRotation = { Pitch = 0, Yaw = 0, Roll = 0 }, RelativeLocation = { X = 100, Y = 200, Z = 90 } })
+local speed = 0
+local move = H.obj("CharacterMovementComponent", { __isActor = false, NetworkSimulatedSmoothRotationTime = 0.05 })
+local me = H.obj("Player_Character_C", { GetAddress = function() return 0xA1 end })
+local other = H.obj("Player_Character_C", { GetAddress = function() return 0xB2 end,
+    Mesh = mesh, RootComponent = root, CharacterMovement = move, RemoteViewPitch = 0,
+    GetVelocity = function() return { X = speed, Y = 0, Z = 0 } end })
+hostPC.Pawn = me
+UE.findAll = function(short)
+    if short == "Player_Character_C" then return { me, other } end
+    return realFindAll(short)
+end
+local key = other:GetFullName()
+Bodies4._books().dressed[key] = 3
+local HOOK = "/Game/VideoStore/core/pawn/Player_Character.Player_Character_C:ReceiveTick"
+-- The function object, so the turning hooks it (a new address: hooked again).
+H.staticObjects[HOOK] = H.obj("Function", { __isActor = false, GetAddress = function() return 0x5150 end })
+local function bodyYaw()                   -- world yaw of the body: view + mesh offset + 90
+    return (root.RelativeRotation.Yaw + mesh.RelativeRotation.Yaw + 90 + 540) % 360 - 180
+end
+local function frames(n, ctx)
+    for _ = 1, n do
+        fake = fake + 0.05
+        H.hooks[HOOK]({ get = function() return ctx end })
+    end
+end
+
+-- A guest: the host's pawn ticks there, and turns itself.
+H.theWorld.NetDriver.ServerConnection = H.obj("NetConnection", { __isActor = false })
+UE._resetLookups()
+UE.beginFrame()
+Bodies4.tick(fake)
+check("the turning is hooked to the pawns' own tick", H.hooks[HOOK] ~= nil, "no hook")
+check("and the engine's easing toward each new view yaw is off on these pawns",
+      move.NetworkSimulatedSmoothRotationTime == 0.0, tostring(move.NetworkSimulatedSmoothRotationTime))
+frames(1, other)
+root.RelativeRotation = { Pitch = 0, Yaw = 40, Roll = 0 }
+frames(3, other)
+check("they look 40 degrees away: the body stays, the head looks",
+      math.abs(bodyYaw()) < 0.5 and inst["Look at Player Alpha"] == 1.0
+      and math.abs(inst["Look At Pos"].X - (100 + 300 * math.cos(math.rad(40)))) < 0.5,
+      ("body %.1f, alpha %s, %d error(s): %s"):format(bodyYaw(), tostring(inst["Look at Player Alpha"]),
+      Bodies4._turning().errors, tostring(Bodies4._turning().lastError))
+      .. (function() local o = {} for a, st in pairs(Bodies4._turning().facing) do
+          o[#o + 1] = ("%s live=%s rel=%s"):format(tostring(a), tostring(st.live), tostring(st.rel)) end
+          return " facing: " .. table.concat(o, "; ") end)())
+check("standing, the legs are told the body is not turning (0.5: at 0 they step round in a circle)",
+      inst["Rotation Delta Z Normalize"] == 0.5, tostring(inst["Rotation Delta Z Normalize"]))
+root.RelativeRotation = { Pitch = 0, Yaw = 100, Roll = 0 }
+frames(1, other)
+local midTurn, midStep = bodyYaw(), inst["Rotation Delta Z Normalize"]
+frames(12, other)
+check("past 60 degrees the body turns to catch up - smoothly, not at once",
+      midTurn > 1 and midTurn < 99 and math.abs(bodyYaw() - 100) < 3.5,
+      ("after one frame %.1f, after twelve %.1f"):format(midTurn, bodyYaw()))
+check("its feet step round the way it turns while it does, and stop when it has",
+      type(midStep) == "number" and midStep > 0.5 and inst["Rotation Delta Z Normalize"] == 0.5,
+      ("mid-turn %s, after %s"):format(tostring(midStep), tostring(inst["Rotation Delta Z Normalize"])))
+local before = direct
+frames(2, other)
+check("a body still turning after the view stopped is put on screen by the one direct call",
+      direct > 0 and direct - before <= 2, ("%d direct call(s)"):format(direct))
+speed = 200
+UE.beginFrame()
+Bodies4.tick(fake)
+root.RelativeRotation = { Pitch = 0, Yaw = 130, Roll = 0 }
+frames(4, other)
+check("walking, the body turns with the view", math.abs(bodyYaw() - 130) < 0.5, ("body %.1f"):format(bodyYaw()))
+
+-- The host: a guest's pawn does not tick there (guestinput.lua stops it), so
+-- the host's own pawn's tick turns it, found through its controller.
+speed = 0
+H.theWorld.NetDriver.ServerConnection = nil
+UE.GetAllPlayerControllers = function() return { hostPC, H.obj("PlayerController", { Pawn = other }) } end
+UE._resetLookups()
+UE.beginFrame()
+Bodies4.tick(fake)
+root.RelativeRotation = { Pitch = 0, Yaw = 175, Roll = 0 }
+frames(14, me)
+check("on the host, the host's own tick turns a guest's body",
+      math.abs(bodyYaw() - 175) < 3.5, ("body %.1f"):format(bodyYaw()))
+
+os.clock = realClock
+H.staticObjects[HOOK] = nil
+UE.GetAllPlayerControllers = realPcs
+UE.findAll = realFindAll
+hostPC.Pawn = savedPawn
+H.theWorld.NetDriver.ServerConnection = nil
+Bodies4.reset()
+UE._resetLookups()
+UE.beginFrame()
+end)()
+
+-- The time of day's lights and sounds on a guest (worldsync.lua): each one's
+-- own handler, with the host's time of day, once per change.
+;(function()
+print("\n-- the time of day's lights and sounds on a guest --")
+local World = require("worldsync")
+local P2P = require("steamp2p")
+local Chan = require("rpcchan")
+local told = {}
+local function listener(cls, fn)
+    local o = H.obj(cls, { __isActor = false })
+    o[fn] = function(_, dt) told[#told + 1] = cls .. "=" .. tostring(dt) end
+    return o
+end
+local lamp = listener("Light_DayTimeToggle_C", "New Day Time Event")
+local street = listener("Outside_Light_Base_C", "New Day Time Event")
+local ambience = listener("Audio_AmbienceSystem_C", "Day Time is Update_Event")
+local realFindAll = UE.findAll
+UE.findAll = function(short)
+    if short == "Light_DayTimeToggle_C" then return { lamp } end
+    if short == "Outside_Light_Base_C" then return { street } end
+    if short == "Audio_AmbienceSystem_C" then return { ambience } end
+    if short == "VFX_DayTimeToggle_C" or short == "Audio_TimeOfDay_C" then return {} end
+    return realFindAll(short)
+end
+World.reset()
+H.theWorld.NetDriver.ServerConnection = H.obj("NetConnection", { __isActor = false })
+local msg = P2P.encode("sky", { dt = "3" })
+local function deliver()
+    UE.beginFrame()
+    H.hooks["/Script/Engine.PlayerController:ClientMessage"](UE.GetPlayerController(), msg)
+    Chan.pump()
+end
+deliver()
+check("the host's time of day reaches the guest's lamps, street lights and ambience",
+      #told == 3 and told[1] == "Light_DayTimeToggle_C=3" and told[2] == "Outside_Light_Base_C=3"
+      and told[3] == "Audio_AmbienceSystem_C=3", table.concat(told, ", "))
+told = {}
+deliver()
+check("the same time of day is not told again", #told == 0, table.concat(told, ", "))
+
+-- The televisions: the guest's movie player started as its BeginPlay would,
+-- and the TV on its channel given its screen as the TV's own function does.
+local tvCalls = {}
+local screenMat = H.obj("MaterialInstanceDynamic", { __isActor = false })
+local player = H.obj("MoviePlayer_C", { ["TV Channel"] = 2, ["Movie is Ready"] = false,
+    ["Create Material for TV"] = function(self) self["Dynamic Mat Instance for TV Screen"] = screenMat end,
+    ["Load a new clip"] = function(self) self["Movie is Ready"] = true end })
+local tv = H.obj("BP_Television_BASE_C", { ["TV Channel"] = 2, ["TV Audio Volume"] = 0.7,
+    Mesh = H.obj("StaticMeshComponent", { __isActor = false,
+        SetMaterial = function(_, slot) tvCalls[#tvCalls + 1] = ("material %d"):format(slot) end }),
+    ["Set Audio Volume"] = function(_, v) tvCalls[#tvCalls + 1] = ("volume %.1f"):format(v) end,
+    ["Volume Visiblity"] = function() tvCalls[#tvCalls + 1] = "volume hidden" end,
+    ["Set Audio Of Movie"] = function() tvCalls[#tvCalls + 1] = "sound" end })
+local otherChannelTv = H.obj("BP_Television_BASE_C", { ["TV Channel"] = 5,
+    Mesh = H.obj("StaticMeshComponent", { __isActor = false,
+        SetMaterial = function() tvCalls[#tvCalls + 1] = "wrong TV" end }) })
+local findAllTimeOfDay = UE.findAll
+UE.findAll = function(short)
+    if short == "MoviePlayer_C" then return { player } end
+    if short == "BP_Television_BASE_C" then return { tv, otherChannelTv } end
+    return findAllTimeOfDay(short)
+end
+UE.beginFrame()
+World.guestTick(9000.0, {})
+check("a guest's TV shows its channel's movie, the movie player started on the guest",
+      player["Movie is Ready"] == true and tv["Movie Player ref"] == player and tvCalls[1] == "material 1"
+      and tvCalls[2] == "volume 0.7" and tvCalls[3] == "volume hidden" and tvCalls[4] == "sound" and #tvCalls == 4,
+      table.concat(tvCalls, ", "))
+-- The machines' animations (mirror.lua): the host's call, played on the
+-- guest's nearest copy of that class - and the scanner never ends a scan here.
+local Mirror = require("mirror")
+Mirror.init()
+local played = {}
+local function machinePart(cls, x, fns)
+    local o = H.obj(cls, { K2_GetActorLocation = function() return { X = x, Y = 0, Z = 90 } end })
+    for _, fn in ipairs(fns) do
+        o[fn] = function(_, ...) played[#played + 1] = cls .. "@" .. x .. " " .. fn .. " " .. table.concat(
+            (function(...) local t = {} for i, v in ipairs({ ... }) do t[i] = tostring(v) end return t end)(...), ",") end
+    end
+    return o
+end
+local nearDesk = machinePart("Return_C", 1912, { "Set Material Frame" })
+local farDesk = machinePart("Return_C", 5000, { "Set Material Frame" })
+local scanner = machinePart("Scanner_Dropbox_C", 1883, { "Flash Scanner Light" })
+local findAllTv = UE.findAll
+UE.findAll = function(short)
+    if short == "Return_C" then return { farDesk, nearDesk } end
+    if short == "Scanner_Dropbox_C" then return { scanner } end
+    return findAllTv(short)
+end
+msg = P2P.encode("anim", { n = "2", e1 = "1\tReturn_C\t1910.0,2.0,90.0\t1",
+                                    e2 = "10\tScanner_Dropbox_C\t1883.0,0.0,90.0\t1,0.6,3,1" })
+deliver()
+check("the host's machine animations play on the guest's own copy of that machine",
+      played[1] == "Return_C@1912 Set Material Frame 1" and played[2] == "Scanner_Dropbox_C@1883 Flash Scanner Light true,0.6,3,false"
+      and #played == 2, table.concat(played, " | "))
+UE.findAll = realFindAll
+H.theWorld.NetDriver.ServerConnection = nil
+World.reset()
 UE.beginFrame()
 end)()
 

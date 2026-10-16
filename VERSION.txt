@@ -1,5 +1,5 @@
 Rewind Together
-Version: 1.7.5
+Version: 1.8.0
 Built:   2026-10-16
 Game:    Retro Rewind (Steam AppID 3552140)
 Engine:  Unreal Engine 5.4
@@ -12,6 +12,55 @@ Unreal refuses mismatched builds.
 
 Check with:  rt.status   in the game's console (press ~ twice,
 type it, press Enter), or the launcher's Play tab.
+
+
+CHANGES IN 1.8.0  -  choose your character, and the store's
+                     machines for guests.
+------------------------------------------------------
+  * NEW: the character screen. The first time you play it
+    opens by itself; after that it is in the pause menu
+    ("Character") and on F4. Pick one of the store's 14 named
+    regulars, or make your own from everything the town
+    wears: body, skin, hair and its colour, beard, glasses,
+    top, bottom and shoes with their colours, height. RANDOM
+    makes a new one; TURN shows the back. It is kept for every
+    game, and everyone sees you that way.
+
+  * NEW: guests can use the CATALOGUE. The cards show as the
+    store's level allows, and Buy places the order with the
+    host's own catalogue: the store's money, the box at the
+    delivery spot. Counter stations (popcorn, slushie, cotton
+    candy, repair desk, sidewalk sign, console rental) can be
+    bought there too.
+
+  * NEW: guests can use the STORE EXPANSION MAP (it showed
+    "Text Block" and "9999$"), pick the SIDEWALK SIGN's ad,
+    RENAME THE STORE on its sign, and see the STORE LEVEL
+    BOARD as it is.
+
+  * FIXED: a guest stocking the SNACK SHELVES paid for each
+    snack, and most never went on the shelf. (Whatever a guest
+    did that the game checks "is there enough money?" for was
+    told no, after the money had gone.)
+
+  * NEW: guests see and hear the PHONE ring, and see it
+    answered.
+
+  * FIXED: other players walked in small circles while
+    standing still, and turned their whole body with every
+    look. Now the head looks and the body turns only when it
+    has to, like a person.
+
+  * FIXED: on the morning after a day, guests now start
+    outside beside the host, as the host does, instead of
+    inside the store.
+
+  * FIXED: a guest clicking the repair desk, the sidewalk sign
+    or the store's name sign could pull the HOST across the
+    store into it.
+
+  * Cotton candy made by a guest keeps its colour (a customer
+    who asked for blue gets blue).
 
 
 CHANGES IN 1.7.5  -  a quicker register for guests.

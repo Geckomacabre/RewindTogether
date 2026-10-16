@@ -55,13 +55,23 @@ function Input.available()
 end
 
 --- Register a key. Returns false when polling is not available, so the caller
---- can fall back to RegisterKeyBind.
-function Input.bind(keyName, label, fn)
+--- can fall back to RegisterKeyBind. onUp, if given, runs when the key is let
+--- go (machines.lua: the end of a drag).
+function Input.bind(keyName, label, fn, onUp)
     if not Input.available() then return false end
     local fkey = engineKeyName(keyName)
     if not fkey then return true end
-    binds[#binds + 1] = { name = fkey, key = nil, label = label, fn = fn, down = false }
+    binds[#binds + 1] = { name = fkey, key = nil, label = label, fn = fn, onUp = onUp, down = false }
     return true
+end
+
+--- Was this key down at the last poll? Only for a key that is bound.
+function Input.isDown(keyName)
+    local fkey = engineKeyName(keyName)
+    for _, b in ipairs(binds) do
+        if b.name == fkey and b.down then return true end
+    end
+    return false
 end
 
 local function poll()
@@ -77,6 +87,10 @@ local function poll()
             -- an unmarked crash would read as the engine's own.
             Safety.phase("key " .. b.label)
             Log.guard("key " .. b.label, b.fn)
+            Safety.phase(Safety.IDLE)
+        elseif b.down and not down and b.onUp then
+            Safety.phase("key up " .. b.label)
+            Log.guard("key up " .. b.label, b.onUp)
             Safety.phase(Safety.IDLE)
         end
         b.down = down
