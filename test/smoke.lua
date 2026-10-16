@@ -3976,6 +3976,46 @@ hostPC["Walking Mapping Context is Enable"] = nil
 check("and is quit once the host is walking", hostClicks[#hostClicks] == 1 and #hostClicks == clicksBefore + 1,
       tostring(hostClicks[#hostClicks]))
 
+-- A customer asking for a console noted player 0 - the host - when they
+-- reached the counter, and gives the talk to that player whoever clicks them.
+-- MEASURED: a guest's click opened it on the host's screen.
+do
+    local a = {}
+    a.host = H.obj("Player_Character_C", { IsLocallyControlled = function() return true end,
+        GetAddress = function() return 0x7d00 end })
+    a.ai = H.obj("AI_Client_Character_C", {})
+    a.task = H.spawn("BTTask_ConsoleRent-Asking_C", { __isActor = false, ["ref as AI Pawn"] = a.ai,
+        ["As Player Character"] = a.host })
+    a.widget = H.obj("UI_Talk_C", { __isActor = false, inVp = true,
+        IsInViewport = function(self) return self.inVp end,
+        RemoveFromParent = function(self) self.inVp = false end })
+    a.talk = H.spawn("TalkSystem_C", { Player = a.host, ["AI talking"] = a.ai,
+        ["Widget Talk"] = a.widget, ["Force Stop LookAt"] = function() end })
+    UE.beginFrame()
+    if H.hooks[BEGIN] then H.hooks[BEGIN](a.talk) end
+    check("the host's own talk with a customer stays on the host's screen",
+          a.widget.inVp == true and a.talk.Player == a.host and a.task["As Player Character"] == a.host,
+          ("on screen %s"):format(tostring(a.widget.inVp)))
+    a.adopted = TalkSync.stats().adopted
+    a.pawn, a.cam = hostPC.Pawn, hostPC.PlayerCameraManager
+    hostPC.Pawn = a.host
+    hostPC.PlayerCameraManager = H.obj("PlayerCameraManager", { __isActor = false,
+        GetAddress = function() return 0x7e00 end })
+    Native.asPlayer(rpcGuestPC, function() if H.hooks[BEGIN] then H.hooks[BEGIN](a.talk) end end)
+    hostPC.Pawn, hostPC.PlayerCameraManager = a.pawn, a.cam
+    check("one begun inside a guest's click is the guest's: off the host's screen, for the guest's pawn, task and all",
+          a.widget.inVp == false and a.talk.Player == guestPawnOnHost
+          and a.task["As Player Character"] == guestPawnOnHost and TalkSync.stats().adopted == a.adopted + 1,
+          ("on screen %s, player %s, task's %s"):format(tostring(a.widget.inVp),
+              tostring(a.talk.Player == guestPawnOnHost), tostring(a.task["As Player Character"] == guestPawnOnHost)))
+    check("and the window is closed after the click", Native.playingAs() == nil, "still open")
+    for _, cls in ipairs({ "TalkSystem_C", "BTTask_ConsoleRent-Asking_C" }) do
+        for i, o in ipairs(H.world.objects[cls] or {}) do
+            if o == a.talk or o == a.task then table.remove(H.world.objects[cls], i) break end
+        end
+    end
+end
+
 -- The guest's side: a conversation the host stopped saying closes by itself.
 H.theWorld.NetDriver.ServerConnection = H.obj("NetConnection", { __isActor = false })
 UE.beginFrame()
@@ -5378,6 +5418,51 @@ Repairs.tickGuest(R.now)
 check("a console copy whose mesh has left it is put back: physics off, where the host's is",
       R.guestConsole.physics == false and R.guestConsole.movedTo ~= nil and math.abs(R.guestConsole.movedTo.X - 1500) < 1,
       ("physics %s, moved %s"):format(tostring(R.guestConsole.physics), tostring(R.guestConsole.movedTo)))
+
+-- The case a customer renting a console has put on the counter is a plain
+-- Actor: the host has the engine send it, and says where its lid is.
+R.case = function(roll)
+    return H.obj("ConsoleRent-Case_C", { bReplicates = false,
+        ["Case Top"] = H.obj("StaticMeshComponent", { __isActor = false,
+            RelativeRotation = { Pitch = 0, Yaw = 0, Roll = roll },
+            K2_SetRelativeRotation = function(self, r) self.RelativeRotation = { Pitch = 0, Yaw = 0, Roll = UE.field(r, "Roll") } end }),
+        GetLocalRole = function() return UE.ROLE_AUTHORITY end,
+        SetReplicates = function(self, on) self.bReplicates = on end,
+        SetReplicateMovement = function(self, on) self.bReplicateMovement = on end,
+        FlushNetDormancy = function() end,
+        K2_GetActorLocation = function() return { X = 1650, Y = -1308, Z = 93 } end })
+end
+R.hostCase, R.guestCase, R.findAll0 = R.case(-80), R.case(0), UE.findAll
+-- Every customer carries one of its own too, hidden: a child actor, built on every machine.
+-- MEASURED: one not yet linked to its customer when it appears, so GetParentActor
+-- cannot tell them apart. The help desk's own "Case Slot" can.
+R.childCase = R.case(0)
+R.childCase.K2_GetActorLocation = function() return { X = 995, Y = -1564, Z = 49 } end   -- at a customer's side
+R.gm["Actor Gatherer"] = H.obj("ActorGatherer_C", { NeedHelp = H.obj("NeedHelp_C", { ["Case Slot"] = R.hostCase }) })
+UE.findAll = function(short)
+    if short == "ConsoleRent-Case_C" then return { R.childCase, R.onHost and R.hostCase or R.guestCase } end
+    return R.findAll0(short)
+end
+onHost(true)
+sentStrings = {}
+R.now = R.now + 1
+Repairs.tickHost(R.now)
+R.crsCase = lastSent("crs")
+check("the host has the engine send a customer's console case, and says where its lid is",
+      R.hostCase.bReplicates == true and R.crsCase ~= nil and R.crsCase:find("k=1", 1, true) ~= nil
+      and R.crsCase:find("1650.0,-1308.0,93.0,-80", 1, true) ~= nil,
+      ("replicates %s, %s"):format(tostring(R.hostCase.bReplicates), tostring(R.crsCase)))
+check("but not the case each customer carries (a child actor: every machine has its own)",
+      R.childCase.bReplicates == false, tostring(R.childCase.bReplicates))
+onHost(false)
+if R.crsCase then downHook(guestPC, R.crsCase) end
+require("rpcchan").pump()
+R.now = R.now + 1
+Repairs.tickGuest(R.now)
+check("and the guest's copy opens as the host's is",
+      math.abs((R.guestCase["Case Top"].RelativeRotation.Roll or 0) + 80) < 0.5,
+      tostring(R.guestCase["Case Top"].RelativeRotation.Roll))
+UE.findAll = R.findAll0
 
 -- A click on a screen machine stays on the guest's screen even with something
 -- in hand (on the host, the look-at would then be where it goes down).

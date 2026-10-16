@@ -826,6 +826,95 @@ starts itself, sync/interaction verified, docs for strangers.
   method on an unchecked wrapper in a probe: `GetAttachParent():GetFName()` crashed both copies
   (EXCEPTION_ACCESS_VIOLATION reading 0x18 in UE4SS).
 
+### A customer's console rental with a guest (2026-10-16, not committed)
+
+Working tree only: native.lua, talksync.lua, repairs.lua, replication.lua, test/smoke.lua.
+540 checks pass. The live test was stopped before the end (the user's call).
+
+- VERIFIED LIVE, fixed: a guest's right click on a customer asking to rent a console opened the
+  talk on the HOST's screen. BTTask_ConsoleRent-Asking notes player 0 (the host) when the customer
+  reaches the desk (Move to Help Desk Completed @7529-@7634) and gives that pawn to the talk
+  ('Player', Enter in Talk System @9626), whoever clicks. Native.asPlayer now records whose window
+  is open (`Native.playingAs()`), and talksync adopts a talk that begins inside a guest's window:
+  the talk's "Player" and the task's "As Player Character" become that guest's pawn. Live: "Can I
+  rent a VHS Player here?" opened on the guest, nothing on the host; the guest's "Sure!" reached the
+  host and the request zone appeared with ref Player Character = the guest's pawn (the answer runs
+  in the guest's window). The answer was pressed with the button's own Button Clicked Event, not a
+  mouse click (the user was at the PC). BTTask_Checkout-AskingForHelp (movie and other requests)
+  works the same way and is covered by the same code - not tried live.
+- VERIFIED LIVE, already worked: paying. The guest's left click on the customer's money
+  (Money_NPC-Stash_C, replicated by npcsync) was replayed on the host: Player click on Money →
+  Change Money, Make Client to pickup case; the customer took the case and left; the console became
+  State 2, rented on day 28.
+- Hand-over, read off the dumps, done by hand on the host only: Request-QuestZone_ConsoleRental Do
+  I accept(true) → Give The Console To Client (@3042) → Get the Object from Player (@1697: takes ref
+  Player Character's Object Hold, Throw, a tick later Object Accepted). Called on the host with the
+  console in the host's hand, the console went into the case and the customer held out money. The
+  base Interaction refuses once the zone's "ref Object Hold" is set - an earlier probe had set it,
+  which is why the first real clicks did nothing. A left click with something in hand is Trace from
+  Camera for Physic → Trace from Camera for Interaction (box trace; the first hit's Interaction; the
+  case's own answers true and does nothing). NOT TESTED: a guest's replayed click handing it over
+  (zone lending from 1.9.0 is in place for it).
+- The counter's case: the host now has the engine send the help desk's own case (NeedHelp "Case
+  Slot", filled by Create a case) and sends its lid angle with "crs". Seen live: the case appeared on
+  the guest at the host's place. NOT VERIFIED: the lid on the guest.
+- REGRESSION made and fixed during the test: the first version sent every ConsoleRent-Case_C, but
+  every customer carries a hidden one of its own (AI_Client_Character "ConsoleRent-Case", a child
+  actor built on every machine). The guest got a second case floating at every customer's side (52
+  cases for 26 customers) - the user saw them. A GetParentActor check still let 56 through: a child
+  actor is not linked to its parent when it first appears. Now only the "Case Slot" is sent, and
+  Replication.patchActor refuses child actors. On the running copies the 26 already sent were
+  switched off on the host and hidden on the guest (a guest keeps what it was sent until it
+  rejoins).
+- NOT TESTED: the guest's click hand-over; the lid; the customer's own case and bag shown on the
+  guest when they leave (Toggle Visibility of Case, Toggle Bag: not mirrored); a console coming back
+  (BTTask_Bring-ConsoleRent: a case on the counter, the player takes the console out of it. To
+  trigger: put a rented console in RentSystem "Console Base out Ready to Return" and raise "Weight
+  Chance of Returning a Console").
+- Rig notes. A request zone gives up after 120 s ("Time before Timeout Quest"; set it on the class
+  default for a test). The save's clock sat at 20:00 with its minute timer stopped and customers
+  stopped coming; Hour 15 plus Weather Actor "Start Timer - Add one Minute" restarted it (an in-game
+  hour is 30 s). A console shelved with "Store Object From Game Code And No Animation" also needs its
+  "Container where Pickup Actor is Stored" set: without it, it ended up under the floor at the
+  delivery spot, and customers had no console to ask for and gave up at the desk. Two bridge calls
+  to one slot at the same time can lose one. Most of the hour went on this setup, not the mod.
+- Second run (same day, scene set up first: zone timeout 900 s on the class default, the clock
+  slowed with "Time for one minute" 30 and restarted, the console shelved with its container
+  set). VERIFIED LIVE: the talk on the guest (Nathan); "Sure!" (button event); the console in the
+  guest's hands on the host (put there by the host's PickUp in the guest's window - see below);
+  THE GUEST'S LEFT CLICK at the case handed it over (the guest's hand empty on the host, the zone
+  took it, the console in the case, the customer held out money); the case's lid on the guest
+  followed the host's (open, then shut on the console: 3 lid updates); the guest's click on the
+  money paid ($35 and 5 XP; the console State 2, rented). A console coming back: made due by hand
+  (its rent day set back, RentSystem "Get Console Rent ready for return", "Weight Chance of
+  Returning a Console" 1.0); a customer brought it, and the open case with the console in it was
+  on the counter on both screens. NOT DONE: the guest taking it out of that case (the user's own
+  play in the windows took over).
+- Found, not fixed: the guest's own aim at a shelved console hits the ConsoleRental_Station_C, not
+  the console, so its right click took nothing (the console had been shelved by game code, which
+  may not be the same as a player shelving it).
+
+### Other players' bodies: crouching, jumping, a stack of tapes (2026-10-16, not committed)
+
+Reported by the user while watching the two copies.
+- "No crouch animation, I just sink in the floor": a crouch shortens the capsule (bIsCrouched
+  replicates; OnStartCrouch moves the mesh and BaseTranslationOffset by the change), and
+  holdPlacement put the standing offset back on its next 2 s poll - feet under the floor, and
+  after standing up the body in the air until the poll. The offset now follows the capsule every
+  tick (wantedOffset: dress()'s Z plus how much shorter the capsule is). MEASURED: crouched, half
+  height 20, base Z -20; standing again, -90.
+- No crouch or jump pose: AnimBP_Base has neither. ANIM_CHA_CrouchToStand_01 (2.07 s,
+  S_Mixamo_Base) kneels at 0 s and has bent knees at 0.9 s (looked at on a body): held single-node
+  while crouched / in the air (MovementMode 3), then back to the blueprint. Live: kneeling on the
+  counter the guest was put on; the blueprint back after standing. SetAnimationMode wants both
+  parameters; SetAnimInstanceClass fails where SetAnimClass works. The jump pose first came only
+  as the body landed (the host hears the movement mode late, plus a 0.15 s wait): the wait is
+  gone - not re-checked live after that change.
+- "Carrying more than one movie z-fights": the stack socket's tapes (LA_VHS_Box_01, 3.5 cm thick
+  along its Y) sat 2.6 cm apart along that axis. Each extra tape's Mesh (a child of its root,
+  not replicated) is pushed out along the tape's thin axis to 3.6 cm from the one before, on other
+  players' bodies only, and put back when it leaves the stack. Not checked live yet.
+
 ### The staff book and the calendar's rewards for guests (2026-10-16)
 
 - Staff book (staffbook.lua): on a guest both pages were empty (Generate Container Page stops at

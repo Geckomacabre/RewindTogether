@@ -203,10 +203,19 @@ function Native.asPlayer(guestPC, fn)
     add(UE.TryGet(hostPC, "Pawn"), UE.TryGet(guestPC, "Pawn"))
     add(UE.TryGet(hostPC, "PlayerCameraManager"), UE.TryGet(guestPC, "PlayerCameraManager"))
 
+    local outer = state.playingAs
+    state.playingAs = guestPC
     fns.rt_redirect_begin(table.unpack(pairs_))
     local ok, err = pcall(fn)
     local swaps = fns.rt_redirect_end()
+    state.playingAs = outer
     return ok, swaps, err
+end
+
+--- The guest a Native.asPlayer window is open for right now, or nil: what
+--- the game starts inside it, it starts for that guest (talksync.lua).
+function Native.playingAs()
+    return UE.alive(state.playingAs) and state.playingAs or nil
 end
 
 --------------------------------------------------------------------------

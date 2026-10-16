@@ -587,6 +587,7 @@ end
 --- order and flags as the sweep. Host only. Returns true when it patched.
 function Replication.patchActor(actor, isPawn)
     if not cfg or not UE.IsServer() or not UE.alive(actor) then return false end
+    if isChildActor(actor) then return false end       -- every machine's own (above)
     if not needsPatch(actor, isPawn == true) then return false end
     return patchInstance(actor, isPawn == true)
 end

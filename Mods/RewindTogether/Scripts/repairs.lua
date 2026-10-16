@@ -44,12 +44,31 @@
         on the guest's copy, the guest's own shelf took the console at the
         same click as the host's, and the two then held it apart.
         The stickers and the mat's drawers come through mirror.lua.
+      * THE CUSTOMER'S CONSOLE CASE. A customer renting a console has an
+        open case put on the counter for it (NeedHelp Create a case and
+        Play Animation - Set on Counter A Case, from BTTask_ConsoleRent-
+        Asking @13339), the console goes in, the case shuts, and the
+        customer carries it out (Request-QuestZone_ConsoleRental, Make
+        Client to pickup case). The case is a plain Actor, not replicated:
+        a guest had an empty counter to put the console on, and saw the
+        customer leave empty-handed. The host has the engine send it
+        (Replication.patchActor), and its lid with the console rental
+        ("crs"): the lid is a component turned by a timeline, which the
+        engine does not send. Only the counter's case - the help desk's own
+        "Case Slot", which Create a case fills: every customer also carries
+        one of its own, hidden (AI_Client_Character's "ConsoleRent-Case", a
+        child actor), which every machine builds for itself. MEASURED (16
+        Oct 2026): sending those as well gave a guest a second case floating
+        at every customer's side, and filled the lid list. Telling them
+        apart by GetParentActor let 56 of them through: a child actor is
+        not yet linked to its parent when it appears.
 ]]
 
 local Log    = require("log")
 local UE     = require("ue")
 local Chan   = require("rpcchan")
 local Safety = require("safety")
+local Replication = require("replication")
 
 local Repairs = {}
 
@@ -68,6 +87,9 @@ local SLOT_OWNER = "Object owning of this container"
 local PRODUCT_NAME = { "BaseStructure_2_FBB12C464AE570CAFD12ED8506160683", "BoxData_25_B5A798DA4F509BDCCF4B189171C1DA10",
                        "ProductName_14_055828B1436E5AD27BFA95AF181099DE" }
 local SLOTS = 8                              -- ConsoleRental_Container0..7
+local CASE = "ConsoleRent-Case_C"
+local CASE_PATH = "/Game/VideoStore/asset/prop/ConsoleRent-Case/ConsoleRent-Case.ConsoleRent-Case_C"
+local CASE_LID = "Case Top"                  -- its Roll is the lid's angle (Set Animation of Case Top Angle @722-@798)
 
 local HELD_EVERY  = 0.5
 local HELD_RESEND = 5.0
@@ -78,9 +100,11 @@ local SEEN_FOR    = 15.0
 local REPAIRED_FOR = 10.0                    -- guest: a tape it just fixed is not broken again on an old word
 local NEAR = 40.0
 local MAX_CONSOLES = 16
+local MAX_CASES = 4
+local CASE_EVERY = 1.0
 
 local stats = { heldSent = 0, repaired = 0, refused = 0, marked = 0, finished = 0, handedBack = 0,
-                crsSent = 0, monitor = 0, lights = 0, consoles = 0, settled = 0 }
+                crsSent = 0, monitor = 0, lights = 0, consoles = 0, settled = 0, casesShared = 0, lids = 0 }
 
 --------------------------------------------------------------------------
 -- Shared
@@ -132,13 +156,33 @@ local function placeOf(a)
     return v
 end
 
+--- Host: the console case on the counter, the help desk's own (see the top).
+local function counterCase()
+    local ag = UE.TryGet(UE.GetGameMode(), "Actor Gatherer")
+    local nh = ag and UE.TryGet(ag, "NeedHelp") or nil
+    local c = UE.alive(nh) and UE.TryGet(nh, "Case Slot") or nil
+    return UE.alive(c) and c or nil
+end
+
+--- Guest: the console cases that are not a customer's own (those are child
+--- actors, linked by now).
+local function looseCases()
+    local list = {}
+    for _, c in ipairs(UE.findAll(CASE) or {}) do
+        local parent = nil
+        if UE.alive(c) then pcall(function() parent = c:GetParentActor() end) end
+        if UE.alive(c) and not UE.valid(parent) then list[#list + 1] = c end
+    end
+    return list
+end
+
 --------------------------------------------------------------------------
 -- Host
 --------------------------------------------------------------------------
 
 local heldSent = {}        -- host: pc full name -> { sig, at }
 local seen = {}
-local nextHeld, nextCrs = 0, 0
+local nextHeld, nextCrs, nextCase = 0, 0, 0
 local crsSig, crsAt = nil, -1e9
 
 local function tell(pc, ok, text)
@@ -238,9 +282,21 @@ local function sendCrs(now)
         end
     end
     fields.n = tostring(n)
+    local k = 0
+    for _, c in ipairs({ counterCase() }) do
+        local at = placeOf(c)
+        local lid = at and UE.TryGet(c, CASE_LID) or nil
+        local r = UE.valid(lid) and UE.rot(UE.TryGet(lid, "RelativeRotation")) or nil
+        if r and k < MAX_CASES then
+            k = k + 1
+            fields["k" .. k] = ("%.1f,%.1f,%.1f,%.0f"):format(at.X, at.Y, at.Z, r.Roll)
+        end
+    end
+    fields.k = tostring(k)
     -- Places move a little while a console is carried: the signature leaves them out.
     local parts = { fields.s, fields.f, fields.p, fields.b, fields.l }
     for i = 1, n do parts[#parts + 1] = fields["c" .. i]:match("(%d+,%d+)$") end
+    for i = 1, k do parts[#parts + 1] = fields["k" .. i]:match("(%-?%d+)$") end
     local sig = table.concat(parts, "|")
     if sig == crsSig and (now - crsAt) < CRS_RESEND then return end
     if Chan.broadcast("crs", fields) > 0 then
@@ -249,9 +305,18 @@ local function sendCrs(now)
     end
 end
 
+--- The customers' console cases, sent by the engine (see the top).
+local function shareCases(now)
+    if now < nextCase then return end
+    nextCase = now + CASE_EVERY
+    local c = counterCase()
+    if c and Replication.patchActor(c) then stats.casesShared = stats.casesShared + 1 end
+end
+
 function Repairs.tickHost(now)
     if not UE.IsServer() or UE.IsStandalone() or not Chan.isReady() then return end
     sendHeld(now)
+    shareCases(now)
     sendCrs(now)
 end
 
@@ -377,9 +442,9 @@ local function takeFinished(now)
     end
 end
 
-local function nearest(cls, at)
+local function nearest(cls, at, list)
     local best, bestD = nil, NEAR
-    for _, o in ipairs(UE.findAll(cls) or {}) do
+    for _, o in ipairs(list or UE.findAll(cls) or {}) do
         local v = placeOf(o)
         if v then
             local dx, dy, dz = v.X - at.X, v.Y - at.Y, v.Z - at.Z
@@ -474,6 +539,25 @@ local function markConsoles()
     end
 end
 
+--- Each case's lid as the host's is.
+local function markCases()
+    if not crs then return end
+    for i = 1, math.min(tonumber(crs.k) or 0, MAX_CASES) do
+        local x, y, z, roll = (crs["k" .. i] or ""):match("^([%d%.%-]+),([%d%.%-]+),([%d%.%-]+),([%d%.%-]+)$")
+        local at = x and { X = tonumber(x), Y = tonumber(y), Z = tonumber(z) } or nil
+        local c = at and nearest(CASE, at, looseCases()) or nil
+        local lid = c and UE.TryGet(c, CASE_LID) or nil
+        local cur = UE.valid(lid) and UE.rot(UE.TryGet(lid, "RelativeRotation")) or nil
+        local want = tonumber(roll)
+        if cur and want and math.abs(cur.Roll - want) > 1.0 then
+            pcall(UE.withHit, function(hit)
+                lid:K2_SetRelativeRotation(UE.rotArg({ Pitch = 0, Yaw = 0, Roll = want }), false, hit, true)
+            end)
+            stats.lids = stats.lids + 1
+        end
+    end
+end
+
 local nextLook = 0
 
 function Repairs.tickGuest(now)
@@ -491,6 +575,7 @@ function Repairs.tickGuest(now)
         end
         drawStation()
         markConsoles()
+        markCases()
     end)
 end
 
@@ -514,20 +599,22 @@ end
 function Repairs.report()
     return { ("Repairs: host sent the held tape %d time(s), %d repaired for guests, %d refused, console rental " ..
               "sent %d; guest marked %d tape(s), finished %d repair(s), %d handed back, monitor %d, lights %d, " ..
-              "consoles %d (%d put back on their roots)%s"):format(stats.heldSent, stats.repaired, stats.refused, stats.crsSent, stats.marked,
+              "consoles %d (%d put back on their roots); customers' cases sent %d, lids %d%s"):format(
+              stats.heldSent, stats.repaired, stats.refused, stats.crsSent, stats.marked,
               stats.finished, stats.handedBack, stats.monitor, stats.lights, stats.consoles, stats.settled,
-              pending and ", a repair waiting" or "") }
+              stats.casesShared, stats.lids, pending and ", a repair waiting" or "") }
 end
 
 function Repairs.reset()
     heldSent, seen, held, repairedAt, putHold, finished, pending = {}, {}, nil, {}, nil, {}, nil
     desk = { busy = false, since = nil, done = false }
-    crs, shown, crsSig, crsAt = nil, {}, nil, -1e9
+    crs, shown, crsSig, crsAt, nextCase = nil, {}, nil, -1e9, 0
     hookedAt = nil
 end
 
 function Repairs.init()
     UE.knowClass("ConsoleRental_Console-Base_C", CONSOLE)
+    UE.knowClass(CASE, CASE_PATH)
     Chan.on("rph", function(f) Log.guard("the host's word on a tape in hand", onHeld, f) end)
     Chan.on("crs", function(f) Log.guard("the host's console rental", onCrs, f) end)
     Chan.on("rpres", function(f) Log.guard("a repair's answer", onResult, f) end)

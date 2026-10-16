@@ -90,6 +90,10 @@ local findSequencesFor
 -- Pawn address -> which way its body faces (see "Which way the body faces").
 -- Up here because holdPlacement, above that section, has to reach it.
 local facing = {}
+-- Pawn full name -> its capsule's half height standing, the pose it holds
+-- ("crouch" | "air") and since when it is in the air (see "Crouching and
+-- jumping"). Up here for holdPlacement too.
+local standHalf, posed, airSince = {}, {}, {}
 -- Full names of figures dressed for the character screen (charscreen.lua):
 -- not pawns, so the poll's clean-up would forget their hair otherwise.
 local figures = {}
@@ -551,8 +555,29 @@ end
 --- gone back to zero then the component will follow it again in a frame and
 --- putting the component back alone would be pure theatre - a body that snaps
 --- into place twice a second and floats the rest of the time.
-local function holdPlacement(pawn, key)
+--- How far the capsule is shorter than standing: a crouch (bIsCrouched
+--- replicates, and the capsule shrinks on every machine).
+local function crouchRise(pawn, key)
+    local capsule = UE.TryGet(pawn, "CapsuleComponent")
+    local half = nil
+    if UE.alive(capsule) then pcall(function() half = capsule:GetScaledCapsuleHalfHeight() end) end
+    if type(half) ~= "number" or half <= 0 then return 0.0 end
+    if UE.TryGet(pawn, "bIsCrouched") ~= true then standHalf[key] = half end
+    return (standHalf[key] or half) - half
+end
+
+--- Where the mesh belongs now: dress()'s place, raised as much as the capsule
+--- is shorter (see "Crouching and jumping").
+local function wantedOffset(pawn, key)
     local want = placed[key]
+    if not want then return nil end
+    local rise = crouchRise(pawn, key)
+    if math.abs(rise) < 0.5 then return want end
+    return { X = want.X, Y = want.Y, Z = want.Z + rise }
+end
+
+local function holdPlacement(pawn, key)
+    local want = wantedOffset(pawn, key)
     if not want then return end
     local comp = UE.TryGet(pawn, "Mesh")
     if not UE.alive(comp) then return end
@@ -1293,6 +1318,145 @@ local function addressOf(o)
     return a
 end
 
+--[[
+    THE STACK IN THE OTHER HAND. REPORTED (16 Oct 2026): carrying more than
+    one movie, they z-fight. MEASURED on the host: a guest's stack socket held
+    two tapes (LA_VHS_Box_01, 13.8 x 3.5 x 23 cm, thin along its own Y) whose
+    roots are 2.6 cm apart along that thin axis - right for the first-person
+    view, inside each other on a body's hand. The roots' places are their
+    replicated attachment (moving them on the host would move the guest's own
+    view), so each extra tape's visible Mesh - a child of its root, which does
+    not replicate - is pushed out along the tape's thin axis to a tape's
+    thickness from the one before, here only, and put back when it leaves.
+]]
+local TAPE_GAP = 3.6           -- cm between tapes in a stack on a body
+local spread = {}              -- item mesh full name -> true while pushed out
+local spreadSeen = {}
+
+--- A vector in socket space, in the frame of a component turned by `r`.
+local function intoFrame(v, r)
+    local p, y, l = math.rad(r.Pitch or 0), math.rad(r.Yaw or 0), math.rad(r.Roll or 0)
+    local sp, cp, sy, cy, sr, cr = math.sin(p), math.cos(p), math.sin(y), math.cos(y), math.sin(l), math.cos(l)
+    local ax = { cp * cy, cp * sy, sp }
+    local ay = { sr * sp * cy - cr * sy, sr * sp * sy + cr * cy, -sr * cp }
+    local az = { -(cr * sp * cy + sr * sy), cy * sr - cr * sp * sy, cr * cp }
+    local function dot(a) return a[1] * v.X + a[2] * v.Y + a[3] * v.Z end
+    return { X = dot(ax), Y = dot(ay), Z = dot(az) }
+end
+
+local function spreadStack(pawn)
+    local socket = UE.TryGet(pawn, "AttachObject Inventory Socket")
+    if not UE.valid(socket) then return end
+    local n = 0
+    pcall(function() n = socket:GetNumChildrenComponents() end)
+    n = tonumber(n) or 0
+    if n < 2 then return end
+    local first = nil
+    pcall(function() first = socket:GetChildComponent(0) end)
+    local p0 = UE.valid(first) and readVec(first, "RelativeLocation") or nil
+    if not p0 then return end
+    for i = 1, math.min(n, 12) - 1 do
+        local item, mesh, name = nil, nil, nil
+        pcall(function() item = socket:GetChildComponent(i) end)
+        if UE.valid(item) then pcall(function() mesh = item:GetChildComponent(0) end) end
+        if UE.valid(mesh) then pcall(function() name = mesh:GetFullName() end) end
+        local p = name and readVec(item, "RelativeLocation") or nil
+        local r = p and readRot(item, "RelativeRotation") or nil
+        if r then
+            local d = intoFrame({ X = p.X - p0.X, Y = p.Y - p0.Y, Z = p.Z - p0.Z }, r)
+            local side = d.Y < 0 and -1 or 1
+            local push = side * math.max(0.0, TAPE_GAP * i - math.abs(d.Y))
+            local rel = readVec(mesh, "RelativeLocation")
+            if rel and math.abs(rel.Y - push) > 0.2 then
+                setRelLocation(mesh, { X = 0.0, Y = push, Z = 0.0 })
+            end
+            spread[name] = true
+            spreadSeen[name] = true
+        end
+    end
+end
+
+--- Tapes no longer in anybody's stack get their mesh back on their root.
+local function unspread()
+    for name in pairs(spread) do
+        if not spreadSeen[name] then
+            spread[name] = nil
+            local mesh = UE.findObject(name)
+            if UE.alive(mesh) then setRelLocation(mesh, { X = 0.0, Y = 0.0, Z = 0.0 }) end
+        end
+    end
+    spreadSeen = {}
+end
+
+--[[
+    CROUCHING AND JUMPING. REPORTED (16 Oct 2026): "there is no crouch
+    animation, I just sink in the floor and hover - same thing with jumping".
+      * A crouch shortens the capsule; the engine's OnStartCrouch moves the
+        mesh and BaseTranslationOffset by the change, and holdPlacement put
+        the standing offset back on its next poll: feet under the floor by the
+        difference, and standing up, the body in the air until the poll. The
+        offset now follows the capsule, every tick (wantedOffset).
+      * The town's animation blueprint (AnimBP_Base) has no crouch and no
+        jump: a crouching or jumping player stood idle. The characters' own
+        ANIM_CHA_CrouchToStand_01 (2.07 s, S_Mixamo_Base like every body here)
+        kneels at 0 s and has its knees bent at 0.9 s (both looked at on a
+        body): held on the first while crouched and on the second in the air,
+        played single-node as the character screen does. Back to the
+        blueprint after. MEASURED: SetAnimationMode wants both its
+        parameters here, and SetAnimInstanceClass fails ("UObject instance is
+        nullptr") where SetAnimClass works.
+]]
+local POSE_ANIM = "/Game/VideoStore/asset/character/animation/transition/ANIM_CHA_CrouchToStand_01.ANIM_CHA_CrouchToStand_01"
+local POSE_AT = { crouch = 0.0, air = 0.9 }
+local MOVE_FALLING = 3
+-- In the air at once: the host hears a guest's movement mode a moment after
+-- the jump began. MEASURED: waiting 0.15 s on top showed the pose only as the
+-- body landed (a 400 cm/s jump is up and down in under a second).
+local AIR_AFTER = 0.0
+
+local function keepFeetDown(pawn, key)
+    local want = wantedOffset(pawn, key)
+    if not want then return end
+    local base = readVec(pawn, "BaseTranslationOffset")
+    if base and near(base.Z, want.Z) then return end
+    UE.TrySet(pawn, "BaseTranslationOffset", want)
+    local comp = UE.TryGet(pawn, "Mesh")
+    if UE.alive(comp) then setRelLocation(comp, want) end
+end
+
+local function switchPose(pawn, key, want)
+    posed[key] = want
+    local mesh = UE.TryGet(pawn, "Mesh")
+    if not UE.alive(mesh) then return end
+    if want then
+        local seq = UE.findObject(POSE_ANIM)
+        if not UE.valid(seq) and LoadAsset then pcall(function() seq = LoadAsset(POSE_ANIM) end) end
+        if not UE.valid(seq) then return end           -- not loadable: stay as we are
+        if pcall(function() mesh:PlayAnimation(seq, false) end) then
+            pcall(function() mesh:SetPlayRate(0.0) end)
+            pcall(function() mesh:SetPosition(POSE_AT[want], false) end)
+        end
+    else
+        local cls = UE.TryGet(mesh, "AnimClass")
+        pcall(function() mesh:SetAnimationMode(0, true) end)
+        if UE.valid(cls) then pcall(function() mesh:SetAnimClass(cls) end) end
+    end
+end
+
+local function holdPose(pawn, key, now)
+    local want = nil
+    local falling = UE.TryGet(UE.TryGet(pawn, "CharacterMovement"), "MovementMode") == MOVE_FALLING
+    if not falling then airSince[key] = nil end
+    if UE.TryGet(pawn, "bIsCrouched") == true then
+        want = "crouch"
+    elseif falling then
+        airSince[key] = airSince[key] or now
+        want = (now - airSince[key] >= AIR_AFTER) and "air" or posed[key]
+    end
+    if want == posed[key] then return end
+    Safety.guard(RISKY_OP, switchPose, pawn, key, want)
+end
+
 local function feedAnimation(pawn, key)
     local speed = speedOf(pawn) or 0.0
     local mesh = UE.TryGet(pawn, "Mesh")
@@ -1572,7 +1736,14 @@ function Bodies.tick(now)
             local k = nil
             pcall(function() k = p:GetFullName() end)
             local _, speed = pcall(feedAnimation, p, k)
-            if k and handsOn[k] then pcall(keepInHands, p) end
+            if k and handsOn[k] then
+                pcall(keepInHands, p)
+                pcall(spreadStack, p)
+            end
+            if k and placed[k] and cfg.BodyPoses ~= false then
+                pcall(keepFeetDown, p, k)
+                pcall(holdPose, p, k, now)
+            end
             if k and turning then
                 pcall(turnTick, p, k, tonumber(speed) or 0.0)
                 seen[addressOf(p) or 0] = true
@@ -1582,6 +1753,7 @@ function Bodies.tick(now)
     for addr in pairs(facing) do
         if not seen[addr] then facing[addr] = nil end
     end
+    pcall(unspread)
 
     -- Animation runs every tick. Dressing is the expensive part and stays on
     -- the poll below; matching a walk cycle to a moving player cannot be.
@@ -1650,7 +1822,8 @@ function Bodies.tick(now)
     -- Forget every pawn that is not here any more. On a guest that is the
     -- host's pawn each time the guest leaves network range: it comes back as
     -- a new actor under a new name, and is dressed again as one.
-    for _, book in ipairs({ dressed, placed, placedRot, anim, wearing, localLook, headComps, handsOn }) do
+    for _, book in ipairs({ dressed, placed, placedRot, anim, wearing, localLook, headComps, handsOn,
+                            standHalf, posed, airSince }) do
         for key in pairs(book) do
             if not present[key] and not figures[key] then book[key] = nil end
         end

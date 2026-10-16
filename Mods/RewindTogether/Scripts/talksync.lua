@@ -42,6 +42,7 @@ local Log    = require("log")
 local UE     = require("ue")
 local Chan   = require("rpcchan")
 local Safety = require("safety")
+local Native = require("native")
 
 local TalkSync = {}
 
@@ -60,7 +61,7 @@ local GUEST_TIMEOUT = 10.0     -- guest: the host says the talk again every RESE
 local RISKY_OP   = "showing a conversation on a guest's screen"
 
 local cfg = nil
-local stats = { hidden = 0, sent = 0, shown = 0, answered = 0, replayed = 0 }
+local stats = { hidden = 0, sent = 0, shown = 0, answered = 0, replayed = 0, adopted = 0 }
 
 local function paramValue(p)
     local v = p
@@ -124,6 +125,41 @@ local function guestPlayerOf(talk)
     return UE.alive(pc) and pc or nil, player
 end
 
+--[[
+    A TALK HANDED TO THE HOST DURING A GUEST'S CLICK. A customer asking for
+    help at the counter (BTTask_ConsoleRent-Asking, BTTask_Checkout-
+    AskingForHelp) notes player 0 when they reach the counter - the host,
+    whoever clicks them later (Move to Help Desk Completed @7529-@7634) - and
+    gives the talk that player ('Player', Enter in Talk System @9626).
+    MEASURED: a guest's right click on a customer asking for a console opened
+    the talk on the HOST's screen. A talk that begins inside a guest's
+    replayed click is that guest's: the talk gets the guest's pawn, and so does
+    the task's own note of the player (a customer looking for a movie follows
+    that player to the shelf, AskingForHelp @240).
+]]
+local ASKING_TASKS = { "BTTask_ConsoleRent-Asking_C", "BTTask_Checkout-AskingForHelp_C",
+                       "BTTask_Checkout-Fees_C" }
+
+local function adopt(talk)
+    local pc = Native.playingAs()
+    local pawn = pc and UE.TryGet(pc, "Pawn") or nil
+    if not UE.alive(pawn) then return nil end
+    local was = UE.TryGet(talk, "Player")
+    if not UE.TrySet(talk, "Player", pawn) then return nil end
+    local ai = UE.TryGet(talk, "AI talking")
+    for _, cls in ipairs(ASKING_TASKS) do
+        -- Not actors, and only a few at a time: a walk, once per talk.
+        for _, t in ipairs(FindAllOf(cls) or {}) do
+            if UE.alive(t) and UE.sameObject(UE.TryGet(t, "ref as AI Pawn"), ai)
+               and UE.sameObject(UE.TryGet(t, "As Player Character"), was) then
+                UE.TrySet(t, "As Player Character", pawn)
+            end
+        end
+    end
+    stats.adopted = stats.adopted + 1
+    return pc
+end
+
 local function hideWidget(talk)
     local w = UE.TryGet(talk, "Widget Talk")
     if not UE.valid(w) then return end
@@ -136,7 +172,7 @@ local function onTalkBegin(ctx)
     if not UE.IsServer() or (cfg and cfg.GuestConversations == false) then return end
     local talk = paramValue(ctx)
     if not UE.valid(talk) then return end
-    local pc = guestPlayerOf(talk)
+    local pc = guestPlayerOf(talk) or adopt(talk)
     if not pc then return end
     -- Before the next frame: the turn would be the host's camera, the
     -- dialog the host's screen.

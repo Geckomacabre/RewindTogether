@@ -1,5 +1,5 @@
 Rewind Together
-Version: 1.9.0
+Version: 1.9.1
 Built:   2026-10-16
 Game:    Retro Rewind (Steam AppID 3552140)
 Engine:  Unreal Engine 5.4
@@ -12,6 +12,30 @@ Unreal refuses mismatched builds.
 
 Check with:  rt.status   in the game's console (press ~ twice,
 type it, press Enter), or the launcher's Play tab.
+
+
+CHANGES IN 1.9.1  -  renting out consoles as a guest, and
+                     other players crouch and jump.
+------------------------------------------------------
+  * FIXED: a guest who talked to a customer asking for help
+    (renting a console, a movie...) opened the conversation on
+    the HOST's screen. It opens on the guest's screen now, and
+    the request is the guest's. Tried live with a console: the
+    guest accepts, hands the console over with a click, and
+    takes the customer's money.
+
+  * NEW: guests see the customer's console case on the counter,
+    opening and shutting as on the host's screen.
+
+  * FIXED: another player who crouched sank into the floor, and
+    stood up into the air. Their body now kneels, feet on the
+    floor, and bends its knees in the air when they jump.
+
+  * FIXED: another player carrying several movies showed the
+    ones in the left hand inside each other.
+
+  * Not tried live yet: a guest taking a returned console out
+    of the customer's case.
 
 
 CHANGES IN 1.9.0  -  a character for every store, and the

@@ -68,7 +68,7 @@ in the download) walks hosts and guests through every step.
 |---|---|
 | 🏬 **One shared store** | The host's save is the store everyone plays in: shelves, stock, decorations, expansions and the sign, exactly as the host sees them. |
 | 🧍 **Your own character** | A character screen in the game's own style: one of the store's 14 regulars, or your own from every body, hairstyle, outfit and colour the town has. Each store keeps its own: the first time in a store (yours or a friend's) the screen opens on the character you made last, and the pause menu's **Character** or **F4** changes it any time. Everyone sees you that way. |
-| 🛒 **Guests work the store** | Pick up and shelve tapes, ring customers up at the till, work the return desk, repair broken tapes, check consoles in at the console rental, order at the office computer and the catalogue, stock the snack shelves, make popcorn, slushies and cotton candy, use build mode and the paint tool, answer the phone, talk to the staff. Every action happens on the host's game, so all screens match. |
+| 🛒 **Guests work the store** | Pick up and shelve tapes, ring customers up at the till, work the return desk, repair broken tapes, check consoles in at the console rental and rent them out to customers, order at the office computer and the catalogue, stock the snack shelves, make popcorn, slushies and cotton candy, use build mode and the paint tool, answer the phone, talk to the staff. Every action happens on the host's game, so all screens match. |
 | 🌆 **The whole town matches** | Money, XP and level, the clock, the day, season and weather, the sky and street lights, every customer's looks and words, and the end-of-day summary. |
 | 💾 **Only the host saves** | A guest's own saves are never read or written. |
 | 🧩 **Mods from Nexus Mods** | Browse Retro Rewind's mods inside the launcher. **Download** takes one click on Nexus, and the launcher installs the file by itself. |
@@ -99,6 +99,8 @@ in the download) walks hosts and guests through every step.
   store's XP.
 - **The console rental:** put a returned console on the mat, watch its scan on the monitor, take
   it back and put it on the shelf; the monitor, the shelf lights and the stickers match the host's.
+- **A customer renting a console:** the guest talks to them (the conversation on the guest's
+  screen), hands the console over into the customer's case and takes the money.
 - **The snack shelves:** stock them from the box and take snacks back off.
 - **Popcorn, slushies and cotton candy:** made on the guest's own screen, a real one in their
   hands for everyone.

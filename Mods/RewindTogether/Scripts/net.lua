@@ -22,7 +22,7 @@ local Net = {}
 -- of confusion: Unreal refuses mismatched GAME builds loudly, but a mismatched
 -- MOD is completely invisible - the session comes up, and then some features
 -- work in one direction only.
-Net.VERSION = "1.9.0"
+Net.VERSION = "1.9.1"
 
 local cfg = nil
 local versionWarned = {}      -- peer id -> already told them about a mismatch

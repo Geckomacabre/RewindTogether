@@ -36,6 +36,7 @@ by design, TODO = planned, UNTESTED = built, not yet seen working live.
 | End of day, level-ups | UI_EndOfTheDay_C | OK | dayend.lua |
 | The next morning | Core_Gamemode "Create a new day" | OK | The game puts only the host at the start zone; guests are now put beside them, facing the same way |
 | Customers, staff, talk | AI_*, TalkSystem_C | OK | npcsync.lua, talksync.lua |
+| A customer's request at the help desk (rent a console) | BTTask_ConsoleRent-Asking_C, Request-QuestZone_ConsoleRental_C, ConsoleRent-Case_C | PART (not committed) | The talk now opens on the guest who clicked (talksync adopts a talk begun in a guest's window; the task had noted the host) - measured live, and the guest's accept made the request the guest's. Measured live: the guest's left click handing the console over, the case and its lid on the guest, paying (the guest clicks the money), and a returning customer's case with the console on the guest's counter. Not tried live: the guest taking a returned console out of the case |
 | Return desk (drop box, scan, rewind, store) | Return_C, DropBox_C, Scanner_Dropbox_C, Rewinder_C, Cursor-Movement_Distance_C | OK | machines.lua sits the guest at the host's desk and replays clicks and drags; mirror.lua shows the desk's screen, case and rewinder on the guest |
 | Repair station (broken tapes) | RepairStation_C, Cartridge_BrokenTape_C, Cartridge_Screw_C | OK (1.9.0) | repairs.lua: a tape's Error is not replicated, so the host tells each guest the state of the tape in its hand ("rph") and the guest's copy is given it; the guest's own desk plays the minigame on its own screen (the zones, tools and tape model are the local player's) and at its end (Repair cartridge End, hooked) action 24 has the host mend the real tape in that guest's hand (Set Error 1, sticker off, Change XP 2). Leaving mid-repair puts the tape back in the guest's hands. Broken stickers through mirror.lua. Steam stat 16 is not counted for guests. Measured live: a whole repair with real clicks (open, screwdriver, three screws, scissors, two cuts), host XP +2 |
 
@@ -99,6 +100,14 @@ by design, TODO = planned, UNTESTED = built, not yet seen working live.
   hold on a guest, lifts itself and turns its physics on; its mesh then stays where it was while
   the actor follows the host (a VHS player on the host's mat was still on the guest's floor at the
   delivery spot). repairs.lua turns that physics off again and puts the copy where the host's is.
+- **A customer asking for help gave the talk to the host, whoever clicked.** The asking tasks note
+  player 0 when the customer reaches the desk, long before anyone clicks, so a guest's click opened
+  the dialog on the host's screen. A talk that begins inside a guest's replayed click is now that
+  guest's (talksync.lua).
+- **Every customer carries a hidden console case, a child actor.** Sending those to guests gave each
+  customer a second, floating case on the guest. A child actor is not yet linked to its parent when
+  it appears, so GetParentActor cannot tell them apart at that moment; only the help desk's own case
+  ("Case Slot") is sent, and Replication.patchActor refuses child actors.
 
 ## Three ways a machine works for a guest
 
