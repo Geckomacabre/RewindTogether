@@ -766,3 +766,106 @@ starts itself, sync/interaction verified, docs for strangers.
   member names typed only into the bridge (UE4SS keeps a pointer into the Lua string; use
   UE.TryGet/TryCall, which pin the name).
 - Smoke 487 PASS.
+
+### A character per store (2026-10-16)
+
+- Requested: "i want it to save the character i make per save". 1.8.0 kept one look for every
+  game (top of RewindTogether.character.txt). Now each store has its own section in that file,
+  `[store <key>]`, key = FNV-1a of "<host's Steam ID or name>/<Save Slot Name>" as 8 hex digits,
+  so the same store has the same key on every player's machine and nothing about the host is
+  written in the file. The host reads its store from the GameMode's "Save Slot Name"
+  (Core_Gamemode @13660, set from GameInstance "Save Slot", e.g. Player_Save1) every 3 s and
+  broadcasts it to guests as "chr" { k, l }; a guest enters the store the host names.
+- First time in a store: the last look made is worn while the screen opens by itself; DONE keeps a
+  new one for this store, CANCEL keeps the one worn. A 1.8.0 file's look is the "last" one, so the
+  first store after the update asks once, already on it. A choice made before the store is known
+  goes to the first store without its own.
+- The pause menu's Character and F4 were already there (1.8.0); they change this store's.
+
+### The repair desk and the console rental for guests (2026-10-16)
+
+- Repair desk (repairs.lua): a tape's `Error` is not replicated (Cartridge_Base: only "Product
+  Structure" is), so a guest's desk always took the "not a broken cartridge" path (RepairStation
+  Interaction @695/@1340). The minigame is the player's own (zones hit-tested from the local cursor,
+  tools following the local mouse, a client-spawned videotape_Repair-Detail), so the guest's desk
+  plays it: the host sends each guest the Error of the tape in its hand ("rph" { e, p = product
+  name }), the guest writes it on its copy and puts the tape in its pawn's "Object Hold" (the desk
+  reads it; hud.lua only does that while the native HUD stand-in is armed). The guest hooks
+  `RepairStation_C:Repair cartridge End` and sends action 24 (Pitch = seq); the host mends the real
+  tape, still in that guest's hand there: `Set Error(desk, 1)`, `Toggle Broken Sticker(false)`,
+  `Change XP(2)` (Pickup The Container @434), inside asGuest. Steam stat 16 is gated by a GameMode:
+  not counted for guests. Leaving mid-repair: the guest's desk keeps the tape in its own slot (in
+  single player it waits there), so the guest's game runs the desk's own Destroy The Video Tape
+  Repair Detail + Pickup The Container to put it back in the hand, as the host has it. A fixed
+  tape ignores a stale "broken" from the host for 10 s.
+- Console rental: the mat and the station are worked by world clicks the host replays. The
+  guest's copies get the host's state ("crs" { s, f, p, b, l, c1..cn }): Status For Monitor(step,
+  true, frame) (Force: @5/@207), the monitor widget's Toggle Progression Bar / Set Progression,
+  Set A Container Light per slot, and each console's State (0 if the host's is 0, else 1, which the
+  guest's own slot and mat refuse) and "is Broken".
+- mirror.lua plays the broken stickers (tapes and consoles), the console's scan sticker and door,
+  and the mat's drawers and test cable on the guest's copies.
+- Live (two copies, 16 Oct 2026): a broken tape's sticker reached the guest (mirror.lua); the guest
+  held it, its copy was marked broken and its desk took it; the whole minigame with real clicks on
+  the guest's window (open, screwdriver, three screws, scissors, two cuts); the host mended the
+  real tape in the guest's hand (Error 1, XP 7112 -> 7114); leaving mid-repair handed it back.
+  Console rental at level 21's machines made usable by bridge: a returned VHS player (State 2) on
+  the mat from the guest, the 40 s scan on the guest's monitor (the test picture and its progress
+  bar, then CHECKED IN), taken back and shelved, with the shelf light on the guest.
+- Found live, fixed: (1) a guest carrying something who clicked a screen machine lost it on the
+  host - with something in hand the host's look-at is not the machine, so the replayed click put
+  the tape down; the guest now holds back a click whose own look-at is a screen machine. (2) The
+  guest's console copy runs its own Verify 20 s after it appears, lifts itself and turns physics
+  on, and its mesh stays behind; repairs.lua turns it off and puts the copy where the host's is.
+  (3) With the host's State 0, the guest's own shelf took the console at the same click as the
+  host's; the guest's copies now always read State 1.
+- Rig notes: the user's display settings are borderless full screen, and each copy snaps back to
+  it on load and on joining; coop_test.py now runs `r.SetRes 1254x705w` and the layout after both.
+  A one-call "aim, then click" sends the old aim: the camera manager's rotation lags
+  SetControlRotation by a frame, so aim in one bridge call and click in the next. And never call a
+  method on an unchecked wrapper in a probe: `GetAttachParent():GetFName()` crashed both copies
+  (EXCEPTION_ACCESS_VIOLATION reading 0x18 in UE4SS).
+
+### The staff book and the calendar's rewards for guests (2026-10-16)
+
+- Staff book (staffbook.lua): on a guest both pages were empty (Generate Container Page stops at
+  its GameMode guards, @145 and @826). The host sends who is in the book ("stf"); the guest's game
+  draws its own cards. The FStaff's plain ints (pay, the two skills, job) and its photo are written
+  into the card's own Staff before AddChild, so the card's Construct writes "$40.00 / DAY", the
+  skill words and their colours itself. The name, about-me, favourite movie and the trait lines
+  (UI_StaffBook_Txt_GameplayTraits_C with its "Gameplay traits" byte) go on after. Measured: the
+  FStaff's TSet of traits reads with `set:ForEach(function(elem) ... elem:get() end)` in this UE4SS
+  build, and struct ints written in place in a widget's struct property hold.
+- Hire, fire and job are action 22: what, the card's place in its list, and its pay to check it by
+  (if the list moved, the only card with that pay). The host makes an unseen UI_StaffBook_Widget_C
+  (WidgetBlueprintLibrary Create; given "As Core Gamemode" and "Staff Book Ref", the two things its
+  Construct and the book's BeginPlay would give it), has it Generate Container Page from the
+  GameMode, and calls that card's own button event. So the vanilla handlers run: Hire Staff- Click
+  button Event (staff places from the research done, the employee spawned, the applicant gone,
+  Steam stat 8 and achievements 8/9 on the host), Event Fired Staff (AI Director Remove Staff),
+  and the card's Set Staff Job. No FStaff is ever built from Lua. Run inside asGuest, so a refusal's
+  Show Error goes to the stand-in HUD. The guest shows the game's own words, from its own string
+  table (ErrorPlayer_StaffBook_*, "{level}" filled in), chosen by the unseen screen's "Maximum
+  Staff Hired".
+- Calendar (calendar.lua): the guest's machine never initialises (Set init Calendar waits for a
+  GameMode, @30). Giving the guest's machine its own WeatherSystem ("Weather Actor ref", the widget's
+  "Calendar Ref" / "ref Weather Actor") and "Save Load" = true, then calling Achievement - Check which
+  is unlock and the widget's own Init Calendar, draws the task list from the guest's own Steam, the
+  weather and the check marks from the mirrored day. Init Calendar's GameMode reads just fail
+  (Accessed None) and carry on. The month is the host's: each grid child's events and slot
+  row/column ("cal" ev "r,c,e.e;..."), drawn with UI_Calendar_Sector_C / _EmptySlot_C. Assigning a
+  Lua table to the sector's "Calender Event" TArray before AddChildToUniformGrid works: the icons
+  and the bonus tooltips are right. Each row's Reclame is the store's, set again whenever the
+  guest's game rebuilds the list. A Claim is action 23: the host clicks its own row's
+  Button_Claim event (Map_Add Achievement Reclame, Change Money +10000, Change XP 50).
+- Live (two copies, 16 Oct 2026): the guest's applicants and employees pages matched the host's
+  (Gabriel, Layla; Adam at the register); the RETURN STATION radio changed the host's job (2 -> 1)
+  and the guest's radios followed; a hire with the one place taken showed "You must be level 20 or
+  higher to hire your second employee."; FIRE let Adam go (he walked out), HIRE took Gabriel (he
+  walked in on both screens, the guest's list redrawn without him). The guest's calendar page was
+  identical to the host's (28 days, events, claimed rows), and a claim paid the store $100 and
+  50 XP once (money and XP on the host, CLAIMED on both lists). Not yet seen live: a new day's
+  redraw on a guest.
+- Measuring tip: `gw.py shot` takes about three seconds, longer than a three-second notice, so read
+  the HUD's UI_Error (txt_error, Current Time / Animation Time) through the bridge instead of
+  screenshotting it.

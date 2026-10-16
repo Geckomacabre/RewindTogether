@@ -42,6 +42,9 @@ local P = {
     scanner  = "/Game/VideoStore/asset/prop/DropBox/Scanner.Scanner_C",
     dropbox  = "/Game/VideoStore/asset/prop/DropBox/DropBox.DropBox_C",
     phone    = "/Game/VideoStore/asset/prop/Telephone/Telephone.Telephone_C",
+    cart     = "/Game/VideoStore/asset/prop/vhs/Cartridge_Base.Cartridge_Base_C",
+    console  = "/Game/VideoStore/asset/prop/ConsoleRental/ConsoleRental_Console-Base.ConsoleRental_Console-Base_C",
+    mat      = "/Game/VideoStore/asset/prop/ConsoleRental/ConsoleRental_Mat.ConsoleRental_Mat_C",
 }
 
 -- { class path, function, argument kinds } - "b" bool, "n" number. The
@@ -70,6 +73,18 @@ local LIST = {
     { P.phone,    "Animation Shaking",                      "b" },
     { P.phone,    "Toggle Interact Icon",                   "b" },
     { P.phone,    "Toggle Phone Pick",                      "b" },
+    -- A tape or a console breaking, and mended (repairs.lua): the sticker,
+    -- and with the first one the puff and the sound if player 0 is near
+    -- (Cartridge_Base Toggle Broken Sticker @706-@1083). A tape's state is
+    -- not replicated, so a guest never saw one break at the scanner.
+    { P.cart,     "Toggle Broken Sticker",                  "b" },
+    { P.console,  "Toggle Broken Sticker",                  "b" },
+    { P.console,  "Toggle Scan Need Sticker",               "b" },
+    { P.console,  "Animation Door",                         "b" },
+    -- The console rental mat's scan, on the host (its drawers and test cable).
+    { P.mat,      "Set VHS Drawer Animation",               "b" },
+    { P.mat,      "Set Game Drawer Animation",              "b" },
+    { P.mat,      "Set Visible Test Cable",                 "bn" },
 }
 -- Components watched by class: { name, "rel" | "world" }. A "world" one is
 -- read and put by its world place (its parent changes on the way).

@@ -67,8 +67,8 @@ in the download) walks hosts and guests through every step.
 | Feature | What it means |
 |---|---|
 | 🏬 **One shared store** | The host's save is the store everyone plays in: shelves, stock, decorations, expansions and the sign, exactly as the host sees them. |
-| 🧍 **Your own character** | A character screen in the game's own style: one of the store's 14 regulars, or your own from every body, hairstyle, outfit and colour the town has. Everyone sees you that way, in every game. |
-| 🛒 **Guests work the store** | Pick up and shelve tapes, ring customers up at the till, work the return desk, order at the office computer and the catalogue, stock the snack shelves, make popcorn, slushies and cotton candy, use build mode and the paint tool, answer the phone, talk to the staff. Every action happens on the host's game, so all screens match. |
+| 🧍 **Your own character** | A character screen in the game's own style: one of the store's 14 regulars, or your own from every body, hairstyle, outfit and colour the town has. Each store keeps its own: the first time in a store (yours or a friend's) the screen opens on the character you made last, and the pause menu's **Character** or **F4** changes it any time. Everyone sees you that way. |
+| 🛒 **Guests work the store** | Pick up and shelve tapes, ring customers up at the till, work the return desk, repair broken tapes, check consoles in at the console rental, order at the office computer and the catalogue, stock the snack shelves, make popcorn, slushies and cotton candy, use build mode and the paint tool, answer the phone, talk to the staff. Every action happens on the host's game, so all screens match. |
 | 🌆 **The whole town matches** | Money, XP and level, the clock, the day, season and weather, the sky and street lights, every customer's looks and words, and the end-of-day summary. |
 | 💾 **Only the host saves** | A guest's own saves are never read or written. |
 | 🧩 **Mods from Nexus Mods** | Browse Retro Rewind's mods inside the launcher. **Download** takes one click on Nexus, and the launcher installs the file by itself. |
@@ -94,6 +94,11 @@ in the download) walks hosts and guests through every step.
 - **The store expansion map, the sidewalk sign's ad, the store's name sign and the level board,**
   the way the host sees them; a guest's room, ad or new name is the store's.
 - **The return desk:** scan, rewind and put away returned tapes at the host's desk.
+- **The repair desk:** a broken tape (it shows its broken sticker on every screen) is repaired on
+  the guest's own screen, screws, scissors and all, and comes back mended for everyone, with the
+  store's XP.
+- **The console rental:** put a returned console on the mat, watch its scan on the monitor, take
+  it back and put it on the shelf; the monitor, the shelf lights and the stickers match the host's.
 - **The snack shelves:** stock them from the box and take snacks back off.
 - **Popcorn, slushies and cotton candy:** made on the guest's own screen, a real one in their
   hands for everyone.
@@ -150,7 +155,7 @@ in the download) walks hosts and guests through every step.
 
 | Route | Setup | Status |
 |---|---|---|
-| **Steam** (friends list or *Join Game*) | nothing: the launcher carries the game over Steam's relay | needs real-world testing, please report how it goes |
+| **Steam** (friends list or *Join Game*) | nothing: the launcher carries the game over Steam's relay | works (the way we play it ourselves) |
 | **Same house / LAN** | *Join by address* with the host's local IP | works |
 | **VPN** (Tailscale, ZeroTier, Radmin) | both join the same VPN, then *Join by address* | works (how the mod was first tested) |
 | **Port forward** (UDP 27015) | `Extras\OPEN PORT FOR FRIENDS - Double click me.bat` on the host | works if your router allows it |
@@ -167,7 +172,7 @@ changed.
 | **F7** | Host: open your store to friends (the launcher does this for you) |
 | **F5** | Join `Config.JoinTarget` or a hosting friend |
 | **F6** | Status: a short box in the middle of the screen for 8 seconds (in a store), and the full report in `RewindTogether.log` |
-| **F4** | The character screen (also in the pause menu as **Character**, and by itself the first time you play) |
+| **F4** | The character screen (also in the pause menu as **Character**, and by itself the first time you're in a store) |
 | **Esc** | The pause menu, guests included. **Back to the store** in it gets you out of anywhere you're stuck: a guest lands beside the host, the host by the register |
 
 <details>
@@ -197,10 +202,11 @@ have turned it on. A fresh install doesn't show one.)
 - **The host decides when the day ends.** Guests see the summary and follow into the next day;
   its buttons are the host's.
 - **Guests can't change a shelf's model** (the mesh tool). Colours (the paint tool) work.
-- **The staff book and the calendar's rewards are the host's** for now: a guest's copy shows them
-  empty. Firing staff and changing their job also work by talking to them, which guests can do.
-- **The repair desk's minigame is the host's** for now (a guest's click there does nothing).
-- **The console rental mat and station** need store level 21 and were not tried with a guest yet.
+- **A guest's hire counts for the host's Steam hiring stat and achievements,** the same as the
+  host's own hire would. The calendar's rewards are the store's: each pays once per store,
+  whoever claims it, and which ones a guest can claim follows the guest's own achievements.
+- **A guest's tape repairs don't count toward their Steam repair stat** (the game only counts it
+  on the host's PC). The repair itself, the store's XP and the mended tape all work.
 - **A new video game's banner picture doesn't show on a guest's office computer** (movies'
   standee pictures do; the banner itself still comes with the order).
 - **A guest's Black Market buy counts for the host's Steam achievements,** the same as the host's
@@ -208,9 +214,10 @@ have turned it on. A fresh install doesn't show one.)
 - **The mouse wheel doesn't switch tools for guests yet.** Use E, V and B.
 - **NPC clothes and colours match the host's,** but a customer can look slightly different for a
   moment when it first appears.
-- **Tested with up to three copies of the game on one PC**, also through a simulated bad
-  connection (300 ms, 5% packet loss), with guests leaving and rejoining. Real players on separate
-  PCs over the internet, and the Steam route in particular, still need real-world testing.
+- **Played over Steam between two PCs on the internet**, and tested with up to three copies of the
+  game on one PC, also through a simulated bad connection (300 ms, 5% packet loss), with guests
+  leaving and rejoining. Bigger groups on separate PCs haven't been tried yet, so please report how
+  it goes.
 
 ---
 

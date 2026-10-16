@@ -4836,6 +4836,640 @@ hostPC.Pawn, hostPC.PlayerCameraManager, guestPC.PlayerCameraManager = T.real.ho
 asHost()
 end
 
+do
+print("\n-- the staff book and the calendar's rewards on a guest --")
+-- REQUESTED (16 Oct 2026): hiring, firing and job changes from a guest's staff
+-- book, and the calendar's task-list rewards. On a guest both book pages were
+-- empty and every Claim was grey; the host clicks its own unseen book's cards
+-- and its own calendar row (staffbook.lua, calendar.lua say why).
+local Staff, Cal = require("staffbook"), require("calendar")
+local F, P, CP = Staff._F, Staff._paths, Cal._paths
+local S = { ups = {}, real = {}, notes = {}, cls = {} }
+local upHook = H.hooks["/Script/Engine.PlayerController:ServerSetSpectatorLocation"]
+local downHook = H.hooks["/Script/Engine.PlayerController:ClientMessage"]
+UE.beginFrame()
+local hostPC = UE.GetPlayerController()
+local guestPC = nil
+for _, pc in ipairs(H.world.objects["PlayerController"] or {}) do
+    if pc ~= hostPC and pc.Player ~= nil and pc.IsValid(pc) then guestPC = pc break end
+end
+S.real.findFirst, S.real.findObject, S.real.gm, S.real.clock = UE.findFirst, UE.findObject, UE.GetGameMode, os.clock
+S.real.send, S.real.notice = hostPC.ServerSetSpectatorLocation, require("hud").notice
+S.real.machine, S.real.lib = require("guestinput").machineClass, H.staticObjects["/Script/UMG.Default__WidgetBlueprintLibrary"]
+S.real.guestPawn, S.real.guestAddr, S.real.hostAddr = guestPC.Pawn, guestPC.GetAddress, hostPC.GetAddress
+S.real.hostPawn, S.real.hostCam, S.real.guestCam = hostPC.Pawn, hostPC.PlayerCameraManager, guestPC.PlayerCameraManager
+S.now = S.real.clock() + 9000
+os.clock = function() return S.now end
+hostPC.ServerSetSpectatorLocation = function(_, l, r) S.ups[#S.ups + 1] = { loc = l, rot = r } end
+require("hud").notice = function(text, isError) S.notes[#S.notes + 1] = { text = text, err = isError } end
+require("native")._fake({
+    rt_version = function() return 2, "RewindNative (fake)" end,
+    rt_hook_return = function() return 0xD8 end,
+    rt_redirect_begin = function() return 0 end,
+    rt_redirect_end = function() return 2 end,
+    rt_unhook_all = function() return 0 end,
+    rt_stats = function() return 4, 0xD8, 0, 0 end,
+    rt_read_ptr = function() return nil end,
+})
+guestPC.GetAddress = guestPC.GetAddress or function() return 0xF300 end
+hostPC.GetAddress = hostPC.GetAddress or function() return 0xF400 end
+guestPC.Pawn = H.obj("Player_Character_C", { GetAddress = function() return 0xF200 end,
+    K2_GetActorLocation = function() return { X = 2700, Y = -2300, Z = 92 } end })
+hostPC.Pawn = H.obj("Player_Character_C", { GetAddress = function() return 0xF500 end })
+hostPC.PlayerCameraManager, guestPC.PlayerCameraManager = nil, nil
+
+local function param(v) return { get = function() return v end } end
+local function list(items)          -- a TArray: Num and 1-based indexing
+    return setmetatable({ items = items, GetArrayNum = function(self) return #self.items end },
+                        { __index = function(self, i) return rawget(self, "items")[i] end })
+end
+local function box(cls)
+    local b = H.obj(cls or "WrapBox", { __isActor = false, kids = {} })
+    b.GetChildrenCount = function(self) return #self.kids end
+    b.GetChildAt = function(self, i) return self.kids[i + 1] end
+    b.GetChildIndex = function(self, c) for i, k in ipairs(self.kids) do if k == c then return i - 1 end end return -1 end
+    b.ClearChildren = function(self) self.kids = {} end
+    b.AddChild = function(self, c) self.kids[#self.kids + 1] = c c.GetParent = function() return self end return {} end
+    b.AddChildToUniformGrid = function(self, c, r, col) self.kids[#self.kids + 1] = c c.at = { r, col } return {} end
+    return b
+end
+local function textBlock(s)
+    return H.obj("TextBlock", { __isActor = false, text = s, SetText = function(self, t) self.text = t:ToString() end,
+        GetText = function(self) return FText(self.text) end })
+end
+local function onScreen(widget, short, fields)
+    fields = fields or {}
+    fields.Widget = H.obj("WidgetComponent", { __isActor = false, GetUserWidgetObject = function() return widget end })
+    return H.obj(short, fields)
+end
+S.tex = H.obj("Texture2D", { __isActor = false })
+S.tex.GetFName = function() return FName("T_UI_StaffBook_Staff-Woman_02") end
+S.photoPath = P.dir .. "T_UI_StaffBook_Staff-Woman_02.T_UI_StaffBook_Staff-Woman_02"
+local function staffer(name, pay, sr, sc, traits, job)
+    local movie = { [Staff._MOVIE[3]] = FName("Rain Woman") }
+    return { [F.name] = FText(name), [F.pay] = pay, [F.sr] = sr, [F.sc] = sc, [F.photo] = S.tex, [F.job] = job or 0,
+             [F.about] = FText("Loves | old = films"),
+             [F.traits] = { ForEach = function(_, fn) for _, t in ipairs(traits) do fn(param(t)) end end },
+             [F.movie] = { [Staff._MOVIE[1]] = { [Staff._MOVIE[2]] = movie } } }
+end
+S.applicants = list({ staffer("Ann Lee", 12000, 30, 80, { 5, 2 }), staffer("Bo Diaz", 15000, 90, 40, { 1 }) })
+S.hired = list({ staffer("Cy Moss", 11000, 50, 50, {}, 1) })
+S.places = 2
+S.gm = H.obj("Core_Gamemode_C", { Level = 11, Money = 500000, ["Actor Gatherer"] = H.obj("ActorGatherer_C", { __isActor = false,
+    Market = H.obj("Market_C", { ["Potential Staff of the Day"] = S.applicants }),
+    ["AI Director"] = H.obj("AI_Director_C", { ["Staff Hired"] = S.hired }) }) })
+
+-- The host's book screen nobody sees: its pages drawn from the GameMode, each
+-- card's button bound to the screen's own handlers (UI_StaffBook_Widget @40).
+local function bookScreen()
+    local w = H.obj("UI_StaffBook_Widget_C", { __isActor = false, Staff_WrapBox = box(), ["Staff-Folder_WrapBox"] = box("VerticalBox") })
+    w["Generate Container Page"] = function(self, page)
+        self.Staff_WrapBox.kids, self["Staff-Folder_WrapBox"].kids = {}, {}
+        S.pages = (S.pages or 0) + 1
+        if page == 2 then
+            for _, s in ipairs(S.applicants.items) do
+                local c = H.obj("UI_StaffBook_HireStaff_C", { __isActor = false, Staff = s,
+                    UI_Catalogue_ButtonHireStaff = H.obj("UI_Catalogue_ButtonHireStaff_C", { __isActor = false }) })
+                c[P.hire] = function(card, button)      -- Hire Staff- Click button Event, through the binding
+                    self["Maximum Staff Hired"] = S.places
+                    if button ~= nil and #S.hired.items < S.places then
+                        table.insert(S.hired.items, card.Staff)
+                        for i, x in ipairs(S.applicants.items) do if x == card.Staff then table.remove(S.applicants.items, i) break end end
+                    end
+                end
+                self.Staff_WrapBox:AddChild(c)
+            end
+        elseif page == 5 then
+            for _, s in ipairs(S.hired.items) do
+                local c = H.obj("UI_StaffBook_CounterTop_C", { __isActor = false, Staff = s,
+                    UI_Catalogue_Fired = H.obj("UI_Catalogue_ButtonBuy_C", { __isActor = false }) })
+                c[P.fire] = function(card, button)
+                    if button == nil then return end
+                    for i, x in ipairs(S.hired.items) do if x == card.Staff then table.remove(S.hired.items, i) break end end
+                end
+                c["Set Staff Job"] = function(card, job) card.Staff[F.job] = job end
+                self["Staff-Folder_WrapBox"]:AddChild(c)
+            end
+        end
+    end
+    S.probe = w
+    return w
+end
+local function card(cls)
+    return H.obj(cls, { __isActor = false, Staff = {}, Text_Name = textBlock(""), Text_AboutMe = textBlock(""),
+        Text_FavoriteMovie = textBlock(""), VerticalBox_GameplayTraits = box("VerticalBox"),
+        ["Unlock Toggle"] = function(self, ok, level) self.unlock = { ok, level } end })
+end
+for k, path in pairs({ book = P.book, cv = P.cv, folder = P.folder, trait = P.trait, sector = CP.sector, empty = CP.empty }) do
+    S.cls[k] = H.obj("WidgetBlueprintGeneratedClass", { __isActor = false })
+    H.staticObjects[path] = S.cls[k]
+end
+H.staticObjects["/Script/UMG.Default__WidgetBlueprintLibrary"] = H.obj("WidgetBlueprintLibrary", { __isActor = false,
+    Create = function(_, _, cls)
+        if cls == S.cls.book then return bookScreen() end
+        if cls == S.cls.cv then return card("UI_StaffBook_HireStaff_C") end
+        if cls == S.cls.folder then return card("UI_StaffBook_CounterTop_C") end
+        if cls == S.cls.trait then return H.obj("UI_StaffBook_Txt_GameplayTraits_C", { __isActor = false }) end
+        if cls == S.cls.sector then return H.obj("UI_Calendar_Sector_C", { __isActor = false }) end
+        if cls == S.cls.empty then return H.obj("UI_Calendar_EmptySlot_C", { __isActor = false }) end
+    end })
+for _, path in ipairs({ Staff._HOOKS.hire, Staff._HOOKS.fire, Staff._HOOKS.job, CP.hook }) do
+    H.staticObjects[path] = H.obj("Function", { __isActor = false, GetAddress = function() return 0xF100 end })
+end
+
+-- The calendar: the host's has claimed reward 3; its page has an empty day and
+-- a new-release day (event 1).
+S.claimMap = { [3] = true }
+local function row(a, claimed, onHost)
+    local r = H.obj("UI_Calendar-Achievement_Slot_C", { __isActor = false, Achievement = a, Reclame = claimed,
+        Money = 10000, XP = 50, ["Set Claim Button State"] = function(self) self.shown = self.Reclame end })
+    if onHost then
+        r[CP.claim] = function(self)             -- the row's own claim (@9166-@9640)
+            if self.Reclame then return end
+            S.claimMap[self.Achievement], self.Reclame = true, true
+            S.gm.Money = S.gm.Money + self.Money
+        end
+    end
+    return r
+end
+local function calendar(onHost)
+    local rows = box("ScrollBox")
+    rows.kids = { row(8, false, onHost), row(3, onHost, onHost) }
+    local tasks = H.obj("UI_Calendar-Achievement_C", { __isActor = false, ScrollBox_Achievement = rows })
+    local grid = box("UniformGridPanel")
+    if onHost then
+        local slot = function(r, c) return H.obj("UniformGridSlot", { __isActor = false, Row = r, Column = c }) end
+        grid.kids = { H.obj("UI_Calendar_EmptySlot_C", { __isActor = false, Slot = slot(0, 0) }),
+                      H.obj("UI_Calendar_Sector_C", { __isActor = false, Slot = slot(0, 1), ["Calender Event"] = list({ 1 }) }) }
+    end
+    local w = H.obj("UI_Calendar_Widget_C", { __isActor = false, Txt_date = textBlock(onHost and "1991" or "25th Spring 1990"),
+        Calendar_Grid = grid, ["UI_Calendar-Achievement"] = tasks,
+        ["UI_Calendar-Weather"] = H.obj("UI_Calendar-Weather_C", { __isActor = false }),
+        ["Init Calendar"] = function(self) self.inits = (self.inits or 0) + 1 end })
+    local m = onScreen(w, "Calendar_Machine_C", {
+        ["Achievement - Check which is unlock"] = function(self) self.checked = (self.checked or 0) + 1 end,
+        ["Set Season Calendar Material"] = function(self, s) self.season = s end })
+    if onHost then
+        m["Achievement Reclame"] = { ForEach = function(_, fn) for a, v in pairs(S.claimMap) do fn(param(a), param(v)) end end }
+        tasks["ref Calendar Machine"] = m
+    end
+    return m, w, tasks
+end
+S.hostCal, S.hostCalW = calendar(true)
+S.guestCal, S.guestCalW, S.guestList = calendar(false)
+S.weather = H.obj("WeatherSystem_C", { Day = 5, Season = 2 })
+S.hostBook = H.obj("StaffBook_C", {})
+S.guestW = H.obj("UI_StaffBook_Widget_C", { __isActor = false, ["Current Widget Switcher"] = 2,
+    Staff_WrapBox = box(), ["Staff-Folder_WrapBox"] = box("VerticalBox") })
+S.guestBook = onScreen(S.guestW, "StaffBook_C")
+S.onHost = true
+UE.GetGameMode = function() return S.onHost and S.gm or nil end
+UE.findFirst = function(short)
+    if short == "StaffBook_C" then return S.onHost and S.hostBook or S.guestBook end
+    if short == "Calendar_Machine_C" then return S.onHost and S.hostCal or S.guestCal end
+    if short == "WeatherSystem_C" then return S.weather end
+    return S.real.findFirst(short)
+end
+UE.findObject = function(path)
+    if path == S.photoPath then return S.tex end
+    if H.byName[path] then return H.byName[path] end
+    return S.real.findObject(path)
+end
+require("guestinput").machineClass = function() return "StaffBook_C" end
+local function asHost() S.onHost = true H.theWorld.NetDriver.ServerConnection = nil UE.beginFrame() end
+local function asGuest() S.onHost = false
+    H.theWorld.NetDriver.ServerConnection = H.obj("NetConnection", { __isActor = false }) UE.beginFrame() end
+local function act(code, x, y, z, seq)
+    asHost()
+    S.now = S.now + 1          -- the channel folds one guest's same action inside 0.04 s into one
+    upHook(guestPC, { X = x, Y = y, Z = z }, UE.rotArg({ Pitch = seq or 0, Yaw = 0, Roll = 100 + code }))
+    require("rpcchan").pump()
+end
+local function wire(kind)
+    for i = #sentStrings, 1, -1 do if sentStrings[i]:find("|" .. kind .. "|", 1, true) then return sentStrings[i] end end
+    return ""
+end
+local function sentAction(code)
+    for i = #S.ups, 1, -1 do
+        local u = S.ups[i]
+        if math.floor(u.rot.Roll + 0.5) == 100 + code then return u end
+    end
+end
+local function n(v) return math.floor((tonumber(v) or -1) + 0.5) end
+
+-- A person in the book crosses whole: texts with the channel's own separators too.
+local rec = Staff._decode(Staff._encode({ name = "Cy Moss", pay = 11000, sr = 50, sc = 75, photo = "T_UI_StaffBook_Staff-Man_03",
+    traits = { 1, 4 }, job = 2, about = "Loves | old = films", movie = "Rain Woman" }, true), true)
+check("a staff member's card data survives the trip: pay, skills, photo, traits, job, about, movie",
+      rec.name == "Cy Moss" and rec.pay == 11000 and rec.sc == 75 and rec.photo == "T_UI_StaffBook_Staff-Man_03"
+      and #rec.traits == 2 and rec.traits[2] == 4 and rec.job == 2 and rec.about == "Loves | old = films"
+      and rec.movie == "Rain Woman", ("%s/%s/%s/%s"):format(tostring(rec.name), tostring(rec.pay), tostring(rec.about), tostring(rec.movie)))
+
+-- What the guests' books need, from the host's Market and AI Director.
+asHost()
+sentStrings = {}
+Staff.tickHost(S.now)
+Cal.tickHost(S.now)
+S.stf, S.cal = wire("stf"), wire("cal")
+check("the host tells the guests who is in its book: the applicants, the employees, the level for the cover",
+      S.stf:find("na=2", 1, true) ~= nil and S.stf:find("ne=1", 1, true) ~= nil and S.stf:find("lv=1", 1, true) ~= nil
+      and S.stf:find("Ann Lee", 1, true) ~= nil and S.stf:find("Rain Woman", 1, true) ~= nil, S.stf)
+check("and its calendar: the rewards the store has claimed, the year, each day's events",
+      S.cal:find("c=3", 1, true) ~= nil and S.cal:find("y=1991", 1, true) ~= nil and S.cal:find("0,0,;0,1,1", 1, true) ~= nil,
+      S.cal)
+
+-- A guest hires the second applicant; the list moved under the click (it is
+-- now first): the host finds them by pay and clicks their card on its own book.
+sentStrings = {}
+act(22, 1, 1, 15000, 11)
+check("a guest's hire is the host's own card clicked: the applicant hired, gone from the list",
+      #S.hired.items == 2 and #S.applicants.items == 1 and S.hired.items[2][F.pay] == 15000
+      and S.probe["As Core Gamemode"] == S.gm and S.probe["Staff Book Ref"] == S.hostBook,
+      ("%d hired, %d applying"):format(#S.hired.items, #S.applicants.items))
+check("and the guest hears it, named", wire("stfres"):find("ok=1", 1, true) ~= nil
+      and wire("stfres"):find("Bo Diaz", 1, true) ~= nil and wire("stfres"):find("k=hire", 1, true) ~= nil, wire("stfres"))
+act(22, 1, 1, 15000, 11)
+check("the same number again (the channel sends each twice) is not a second hire", #S.hired.items == 2,
+      ("%d hired"):format(#S.hired.items))
+-- No places left: the game's own refusal, by the screen's staff count.
+S.places = 1
+act(22, 1, 1, 12000, 12)
+check("a hire the game refuses says why: the second place opens at store level 20",
+      #S.hired.items == 2 and wire("stfres"):find("ok=0", 1, true) ~= nil and wire("stfres"):find("e=second", 1, true) ~= nil,
+      wire("stfres"))
+S.places = 2
+-- A job, then a fire, on the employees' page.
+act(22, 4, 1, 11000, 13)
+check("a guest's job change is the card's own Set Staff Job on the host", S.hired.items[1][F.job] == 2
+      and wire("stfres"):find("ok=1", 1, true) ~= nil, tostring(S.hired.items[1][F.job]))
+act(22, 2, 2, 15000, 14)
+check("a guest letting someone go is the card's own fire button on the host",
+      #S.hired.items == 1 and S.hired.items[1][F.pay] == 11000 and wire("stfres"):find("ok=1", 1, true) ~= nil,
+      ("%d hired; %s"):format(#S.hired.items, wire("stfres")))
+
+-- The guest's book, drawn from the host's lists with the game's own cards.
+asGuest()
+if S.stf ~= "" then downHook(guestPC, S.stf) end
+require("rpcchan").pump()
+S.now = S.now + 1
+Staff.tickGuest(S.now)
+S.box = S.guestW.Staff_WrapBox
+S.c1 = S.box.kids[1]
+check("a guest's applicants page shows the host's applicants: pay and skills in the card before it is shown",
+      #S.box.kids == 2 and S.c1.Staff[F.pay] == 12000 and S.c1.Staff[F.sr] == 30 and S.c1.Staff[F.photo] == S.tex,
+      ("%d card(s)"):format(#S.box.kids))
+check("then the name, the traits (the game's own trait lines) and the cover by the store's level",
+      S.c1.Text_Name.text == "Ann Lee" and #S.c1.VerticalBox_GameplayTraits.kids == 2
+      and S.c1.VerticalBox_GameplayTraits.kids[1]["Gameplay traits"] == 2 and S.c1.unlock and S.c1.unlock[1] == true
+      and S.c1.unlock[2] == 6, ("%s, %d trait(s)"):format(tostring(S.c1.Text_Name.text), #S.c1.VerticalBox_GameplayTraits.kids))
+S.guestW["Current Widget Switcher"] = 5
+S.now = S.now + 1
+Staff.tickGuest(S.now)
+S.folder = S.guestW["Staff-Folder_WrapBox"]
+S.f1 = S.folder.kids[1]
+check("the employees page: job, about me and favourite movie",
+      #S.folder.kids == 1 and S.f1.Staff[F.job] == 1 and S.f1.Text_AboutMe.text == "Loves | old = films"
+      and S.f1.Text_FavoriteMovie.text == "Rain Woman", ("%d card(s)"):format(#S.folder.kids))
+S.folder.kids = {}                         -- the guest's game empties the boxes on every tab switch
+S.now = S.now + 1
+Staff.tickGuest(S.now)
+check("drawn again after the guest's own game empties the page", #S.folder.kids == 1, ("%d card(s)"):format(#S.folder.kids))
+-- Clicks on the guest's cards: what, where, and the pay to check it by.
+S.ups = {}
+H.hooks[Staff._HOOKS.hire](param(S.box.kids[2]), param(H.obj("Button", { __isActor = false })))
+Staff.tickGuest(S.now)
+S.sent = sentAction(22)
+check("a Hire on a guest's card is sent to the host: hire, second card, its pay",
+      S.sent ~= nil and n(S.sent.loc.X) == 1 and n(S.sent.loc.Y) == 2 and n(S.sent.loc.Z) == 15000,
+      S.sent and ("%s %s %s"):format(tostring(S.sent.loc.X), tostring(S.sent.loc.Y), tostring(S.sent.loc.Z)) or "nothing sent")
+downHook(guestPC, P2P.encode("stfres", { ok = "1", t = "Bo Diaz is hired.", k = "hire" }))
+require("rpcchan").pump()
+S.ups = {}
+H.hooks[Staff._HOOKS.job](param(S.folder.kids[1]), param(2))
+Staff.tickGuest(S.now)
+S.sent = sentAction(22)
+check("a guest's job radio goes to the host as that job, for that employee",
+      S.sent ~= nil and n(S.sent.loc.X) == 4 and n(S.sent.loc.Y) == 1 and n(S.sent.loc.Z) == 11000,
+      S.sent and tostring(S.sent.loc.X) or "nothing sent")
+S.notes = {}
+downHook(guestPC, P2P.encode("stfres", { ok = "0", t = "x", e = "second" }))
+require("rpcchan").pump()
+check("a refused hire is told in the game's words, with the level", S.notes[1] ~= nil and S.notes[1].err == true
+      and S.notes[1].text:find("20", 1, true) ~= nil, S.notes[1] and S.notes[1].text or "nothing shown")
+
+-- The calendar: a guest claims reward 8, the host's own row pays the store.
+asHost()
+sentStrings = {}
+S.money = S.gm.Money
+act(23, 8, 0, 0, 21)
+check("a guest's reward is claimed by the host's own row: the store paid, the save marked",
+      S.claimMap[8] == true and S.gm.Money == S.money + 10000 and wire("calres"):find("ok=1", 1, true) ~= nil,
+      wire("calres"))
+act(23, 8, 0, 0, 21)
+act(23, 3, 0, 0, 22)
+check("never twice: not the same number again, not a reward the store already claimed",
+      S.gm.Money == S.money + 10000 and wire("calres"):find("ok=0", 1, true) ~= nil, wire("calres"))
+
+-- The guest's calendar: started like the host's, the host's page and claims on it.
+asGuest()
+if S.cal ~= "" then downHook(guestPC, S.cal) end
+require("rpcchan").pump()
+S.now = S.now + 2
+Cal.tickGuest(S.now)
+S.rows = S.guestList.ScrollBox_Achievement.kids
+S.grid = S.guestCalW.Calendar_Grid.kids
+check("a guest's calendar is started with its own weather actor, as the host's is",
+      S.guestCal["Save Load"] == true and S.guestCal["Weather Actor ref"] == S.weather and S.guestCalW["Calendar Ref"] == S.guestCal
+      and S.guestCalW.inits == 1 and S.guestCal.checked == 1 and S.guestCal.season == 2,
+      ("inits %s, checked %s"):format(tostring(S.guestCalW.inits), tostring(S.guestCal.checked)))
+check("its page is the host's: the year, and each day with the game's own cell",
+      S.guestCalW.Txt_date.text == "1991" and #S.grid == 2 and S.grid[2].__class == "UI_Calendar_Sector_C"
+      and S.grid[2]["Calender Event"] and S.grid[2]["Calender Event"][1] == 1 and S.grid[2].at[2] == 1,
+      ("%s, %d cell(s)"):format(tostring(S.guestCalW.Txt_date.text), #S.grid))
+check("the store's claimed reward shows claimed on the guest's list, the rest as the guest's Steam says",
+      S.rows[2].Reclame == true and S.rows[2].shown == true and S.rows[1].Reclame == false,
+      ("3: %s, 8: %s"):format(tostring(S.rows[2].Reclame), tostring(S.rows[1].Reclame)))
+S.ups = {}
+H.hooks[CP.hook](param(S.rows[1]))
+Cal.tickGuest(S.now)
+S.sent = sentAction(23)
+check("a Claim on a guest's row goes to the host as that reward", S.sent ~= nil and n(S.sent.loc.X) == 8,
+      S.sent and tostring(S.sent.loc.X) or "nothing sent")
+downHook(guestPC, P2P.encode("calres", { ok = "1", t = "Claimed: $100 and 50 XP for the store." }))
+require("rpcchan").pump()
+S.now = S.now + 2
+Cal.tickGuest(S.now)
+check("and once the host says so, it shows claimed", S.rows[1].Reclame == true and S.rows[1].shown == true,
+      tostring(S.rows[1].Reclame))
+
+-- Leave everything as it was.
+for _, path in ipairs({ P.book, P.cv, P.folder, P.trait, CP.sector, CP.empty, Staff._HOOKS.hire, Staff._HOOKS.fire,
+                        Staff._HOOKS.job, CP.hook }) do H.staticObjects[path] = nil end
+H.staticObjects["/Script/UMG.Default__WidgetBlueprintLibrary"] = S.real.lib
+Staff.reset()
+Cal.reset()
+require("guestinput").machineClass, require("hud").notice = S.real.machine, S.real.notice
+UE.findFirst, UE.findObject, UE.GetGameMode, os.clock = S.real.findFirst, S.real.findObject, S.real.gm, S.real.clock
+hostPC.ServerSetSpectatorLocation = S.real.send
+guestPC.Pawn, guestPC.GetAddress, hostPC.GetAddress = S.real.guestPawn, S.real.guestAddr, S.real.hostAddr
+hostPC.Pawn, hostPC.PlayerCameraManager, guestPC.PlayerCameraManager = S.real.hostPawn, S.real.hostCam, S.real.guestCam
+asHost()
+end
+
+do
+print("\n-- the repair desk and the console rental on a guest --")
+-- REQUESTED (16 Oct 2026): the repair desk's minigame and the console rental for
+-- guests. A tape's Error is not replicated, so a guest's desk never took a
+-- broken tape; the guest's desk now plays the repair and the host mends the
+-- real tape. The console rental's state reaches the guest's copies.
+local Repairs = require("repairs")
+local R = { ups = {}, real = {}, notes = {}, onHost = true }
+local upHook = H.hooks["/Script/Engine.PlayerController:ServerSetSpectatorLocation"]
+local downHook = H.hooks["/Script/Engine.PlayerController:ClientMessage"]
+R.CART = "/Game/VideoStore/asset/prop/vhs/Cartridge_Base.Cartridge_Base_C"
+R.END = "/Game/VideoStore/asset/prop/RepairStation/RepairStation.RepairStation_C:Repair cartridge End"
+UE.beginFrame()
+local hostPC = UE.GetPlayerController()
+local guestPC = nil
+for _, pc in ipairs(H.world.objects["PlayerController"] or {}) do
+    if pc ~= hostPC and pc.Player ~= nil and pc.IsValid(pc) then guestPC = pc break end
+end
+R.real.findFirst, R.real.findAll, R.real.gm, R.real.clock = UE.findFirst, UE.findAll, UE.GetGameMode, os.clock
+R.real.send, R.real.notice = hostPC.ServerSetSpectatorLocation, require("hud").notice
+R.real.guestPawn, R.real.guestAddr, R.real.hostAddr = guestPC.Pawn, guestPC.GetAddress, hostPC.GetAddress
+R.real.hostPawn = hostPC.Pawn
+R.now = R.real.clock() + 11000
+os.clock = function() return R.now end
+hostPC.ServerSetSpectatorLocation = function(_, l, r) R.ups[#R.ups + 1] = { loc = l, rot = r } end
+require("hud").notice = function(text, isError) R.notes[#R.notes + 1] = { text = text, err = isError } end
+require("native")._fake({
+    rt_version = function() return 2, "RewindNative (fake)" end,
+    rt_hook_return = function() return 0xD8 end,
+    rt_redirect_begin = function() return 0 end,
+    rt_redirect_end = function() return 2 end,
+    rt_unhook_all = function() return 0 end,
+    rt_stats = function() return 4, 0xD8, 0, 0 end,
+    rt_read_ptr = function() return nil end,
+})
+local function param(v) return { get = function() return v end } end
+local function onHost(yes)
+    R.onHost = yes
+    H.theWorld.NetDriver.ServerConnection = (not yes) and H.obj("NetConnection", { __isActor = false }) or nil
+    UE.beginFrame()
+end
+R.cartClass = H.obj("BlueprintGeneratedClass", { __isActor = false })
+H.staticObjects[R.CART] = R.cartClass
+H.staticObjects[R.END] = H.obj("Function", { __isActor = false, GetAddress = function() return 0xA240 end })
+local function tape(err, addr)
+    local t = H.obj("Cartridge-Tape_VHS_C", { Error = err,
+        ["Product Structure"] = { BaseStructure_2_FBB12C464AE570CAFD12ED8506160683 = {
+            BoxData_25_B5A798DA4F509BDCCF4B189171C1DA10 = { ProductName_14_055828B1436E5AD27BFA95AF181099DE = FName("NIGHT DRIVE") } } },
+        ["Set Error"] = function(self, _, e) self.Error = e end,
+        ["Toggle Broken Sticker"] = function(self, v) self.sticker = v end })
+    t.IsA = function(_, c) return c == R.cartClass end
+    t.GetAddress = function() return addr end
+    return t
+end
+R.hostTape = tape(5, 0xA100)
+R.guestTape = tape(0, 0xA200)
+guestPC.GetAddress = guestPC.GetAddress or function() return 0xF310 end
+hostPC.GetAddress = hostPC.GetAddress or function() return 0xF410 end
+-- The host's copy of the guest's pawn holds the broken tape.
+guestPC.Pawn = H.obj("Player_Character_C", { GetAddress = function() return 0xF210 end, ["Object Hold"] = R.hostTape,
+    K2_GetActorLocation = function() return { X = 2400, Y = -1700, Z = 92 } end })
+-- The guest's own pawn: the tape in its hand socket, Object Hold empty (no HUD stand-in).
+R.socket = H.obj("SceneComponent", { __isActor = false,
+    GetNumChildrenComponents = function() return R.inHand and 1 or 0 end,
+    GetChildComponent = function() return { GetOwner = function() return R.inHand end } end })
+R.inHand = R.guestTape
+hostPC.Pawn = H.obj("Player_Character_C", { GetAddress = function() return 0xF510 end, ["AttachObject Socket"] = R.socket,
+    ["Set Object Hold"] = function(self, o) self["Object Hold"] = o end })
+R.gm = H.obj("Core_Gamemode_C", { Money = 100000, Level = 22,
+    ["Change XP"] = function(self, xp) self.xp = (self.xp or 0) + xp end })
+R.slot = H.obj("RepairStation-Shelve_Container_C", { __isActor = false })
+R.guestDesk = H.obj("RepairStation_C", { ["In Machine Mode"] = false, ["RepairStation-Shelve_Container"] = R.slot,
+    ["Destroy The Video Tape Repair Detail"] = function(self) self.destroyed = true end,
+    ["Pickup The Container"] = function(self) self.picked = true R.slot["Object owning of this container"] = nil end })
+R.hostDesk = H.obj("RepairStation_C", {})
+-- The console rental: slot 2 holds a console; one console waiting for its scan.
+local function container(owned) return H.obj("ConsoleRental_Container_C", { __isActor = false,
+    ["Object owning of this container"] = owned }) end
+local function station(host)
+    local w = H.obj("UI_ConsoleRent-Monitor_C", { __isActor = false,
+        DIV_Progression = H.obj("Overlay", { __isActor = false, IsVisible = function() return true end }),
+        ["Toggle Progression Bar"] = function(self, b) self.bar = b end,
+        ["Set Progression"] = function(self, p) self.progress = p end })
+    local s = H.obj("ConsoleRental_Station_C", { Bought = true, ["Current Monitor Step"] = host and 1 or 0,
+        ["Current Error Frame"] = 0, ["Scanning Progression"] = host and 0.45 or 0,
+        Monitor_Widget = H.obj("WidgetComponent", { __isActor = false, GetUserWidgetObject = function() return w end }),
+        ["Status For Monitor"] = function(self, step, force, frame) self.monitor = { step, force, frame } end,
+        ["Set A Container Light"] = function(self, c, on) self.lights = self.lights or {} self.lights[c] = on end })
+    for i = 0, 7 do s["ConsoleRental_Container" .. i] = container(host and i == 2 and R.hostTape or nil) end
+    s.widget = w
+    return s
+end
+R.hostStation, R.guestStation = station(true), station(false)
+local function console(x, state) return H.obj("ConsoleRental_Console-Base_C", { State = state, ["is Broken"] = false,
+    K2_GetActorLocation = function() return { X = x, Y = -2900, Z = 95 } end }) end
+R.hostConsole, R.guestConsole = console(1500, 2), console(1500.4, 0)
+UE.GetGameMode = function() return R.onHost and R.gm or nil end
+UE.findFirst = function(short)
+    if short == "RepairStation_C" then return R.onHost and R.hostDesk or R.guestDesk end
+    if short == "ConsoleRental_Station_C" then return R.onHost and R.hostStation or R.guestStation end
+    return R.real.findFirst(short)
+end
+UE.findAll = function(short)
+    if short == "ConsoleRental_Console-Base_C" then return { R.onHost and R.hostConsole or R.guestConsole } end
+    return R.real.findAll(short)
+end
+local function lastSent(kind)
+    for i = #sentStrings, 1, -1 do if sentStrings[i]:find("|" .. kind .. "|", 1, true) then return sentStrings[i] end end
+    return nil
+end
+
+-- The host says what state the tape in the guest's hand is in.
+Repairs.reset()
+onHost(true)
+sentStrings = {}
+Repairs.tickHost(R.now)
+R.held = lastSent("rph")
+check("the host tells a guest the tape in its hand is broken (a tape's Error is not replicated)",
+      R.held ~= nil and R.held:find("e=5", 1, true) ~= nil and R.held:find("NIGHT DRIVE", 1, true) ~= nil, tostring(R.held))
+R.crs = lastSent("crs")
+check("and the console rental as the host has it: the monitor, the slot lights, each console",
+      R.crs ~= nil and R.crs:find("s=1", 1, true) ~= nil and R.crs:find("l=00100000", 1, true) ~= nil
+      and R.crs:find(",2,0", 1, true) ~= nil, tostring(R.crs))
+
+-- The guest's copy of that tape is broken now, and in the pawn's Object Hold for its desk.
+onHost(false)
+if R.held then downHook(guestPC, R.held) end
+if R.crs then downHook(guestPC, R.crs) end
+require("rpcchan").pump()
+R.now = R.now + 1
+Repairs.tickGuest(R.now)
+check("so the guest's own desk takes it: its copy is broken, and in the pawn's Object Hold",
+      R.guestTape.Error == 5 and hostPC.Pawn["Object Hold"] == R.guestTape,
+      ("error %s, hold %s"):format(tostring(R.guestTape.Error), tostring(hostPC.Pawn["Object Hold"])))
+check("the guest's station shows the host's monitor, scan bar and slot lights",
+      R.guestStation.monitor ~= nil and R.guestStation.monitor[1] == 1 and R.guestStation.monitor[2] == true
+      and R.guestStation.widget.bar == true and math.abs((R.guestStation.widget.progress or 0) - 0.45) < 0.001
+      and R.guestStation.lights ~= nil and R.guestStation.lights[R.guestStation.ConsoleRental_Container2] == true
+      and R.guestStation.lights[R.guestStation.ConsoleRental_Container0] == false, "not as the host's")
+check("a console waiting for its scan is one the guest's own slot and mat refuse (State 1)",
+      R.guestConsole.State == 1, tostring(R.guestConsole.State))
+-- A scanned one (the host's State 0) too: the guest's own shelf would take
+-- it at the same click as the host's (measured), and they would hold it apart.
+R.guestConsole.State = 0
+R.crsWire = R.crs and R.crs:gsub(",2,0", ",0,0") or nil
+if R.crsWire then downHook(guestPC, R.crsWire) end
+require("rpcchan").pump()
+R.now = R.now + 1
+Repairs.tickGuest(R.now)
+check("and so is a scanned one: the guest's copies are never ones its own shelf or mat would take",
+      R.guestConsole.State == 1, tostring(R.guestConsole.State))
+-- MEASURED (16 Oct 2026): a guest's console copy turned its own physics on 20 s
+-- after it appeared, and its mesh stayed at the delivery spot.
+R.guestConsole.Mesh = H.obj("StaticMeshComponent", { __isActor = false,
+    K2_GetComponentLocation = function() return { X = 2240, Y = -2742, Z = -30 } end })
+R.guestConsole["Toggle Simulate Physic"] = function(self, on) self.physics = on end
+R.guestConsole.K2_SetActorLocationAndRotation = function(self, at) self.movedTo = at end
+R.now = R.now + 1
+Repairs.tickGuest(R.now)
+check("a console copy whose mesh has left it is put back: physics off, where the host's is",
+      R.guestConsole.physics == false and R.guestConsole.movedTo ~= nil and math.abs(R.guestConsole.movedTo.X - 1500) < 1,
+      ("physics %s, moved %s"):format(tostring(R.guestConsole.physics), tostring(R.guestConsole.movedTo)))
+
+-- A click on a screen machine stays on the guest's screen even with something
+-- in hand (on the host, the look-at would then be where it goes down).
+R.ups = {}
+hostPC.Pawn["ref Object Look At"] = H.obj("RepairStation_C", { ["Hide Cursor Interface while Using"] = true })
+require("guestinput")._onPress(1)
+check("a guest's click on a screen machine is not sent to the host", #R.ups == 0, ("%d sent"):format(#R.ups))
+hostPC.Pawn["ref Object Look At"] = nil
+
+-- The guest's desk finishes the repair: the host hears it and mends the real tape.
+R.slot["Object owning of this container"] = R.guestTape
+H.hooks[R.END](param(R.guestDesk))
+R.guestTape.Error = 1                                     -- the desk's own end did that (@582)
+R.ups = {}
+R.now = R.now + 1
+Repairs.tickGuest(R.now)
+R.up = nil
+for _, u in ipairs(R.ups) do if math.floor((u.rot.Roll or 0) + 0.5) == 124 then R.up = u end end
+check("a repair finished on the guest's desk goes to the host (action 24)", R.up ~= nil, ("%d sent"):format(#R.ups))
+onHost(true)
+sentStrings = {}
+if R.up then
+    R.now = R.now + 1
+    upHook(guestPC, R.up.loc, R.up.rot)
+    require("rpcchan").pump()
+end
+check("the host mends the real tape in that guest's hand: Error 1, the sticker off, 2 XP",
+      R.hostTape.Error == 1 and R.hostTape.sticker == false and R.gm.xp == 2,
+      ("error %s, sticker %s, xp %s"):format(tostring(R.hostTape.Error), tostring(R.hostTape.sticker), tostring(R.gm.xp)))
+check("and tells the guest", (lastSent("rpres") or ""):find("ok=1", 1, true) ~= nil, tostring(lastSent("rpres")))
+if R.up then
+    R.now = R.now + 1
+    upHook(guestPC, R.up.loc, R.up.rot)
+    require("rpcchan").pump()
+end
+check("the same repair number again does nothing more", R.gm.xp == 2, tostring(R.gm.xp))
+
+-- An old "broken" from the host does not break the tape the guest just fixed.
+onHost(false)
+downHook(guestPC, require("steamp2p").encode("rph", { e = "5", p = "NIGHT DRIVE" }))
+require("rpcchan").pump()
+R.now = R.now + 1
+Repairs.tickGuest(R.now)
+check("a tape the guest just fixed is not broken again by an old word from the host", R.guestTape.Error == 1,
+      tostring(R.guestTape.Error))
+
+-- Leaving the desk mid-repair: the tape goes back in the hand, as the host has it.
+R.slot["Object owning of this container"] = R.guestTape
+R.guestDesk["In Machine Mode"] = true
+R.now = R.now + 1
+Repairs.tickGuest(R.now)
+R.guestDesk["In Machine Mode"] = false
+R.now = R.now + 1
+Repairs.tickGuest(R.now)
+R.now = R.now + 1
+Repairs.tickGuest(R.now)
+check("leaving the desk mid-repair puts the tape back in the guest's hands (it never left them on the host)",
+      R.guestDesk.destroyed == true and R.guestDesk.picked == true, "left on the desk")
+
+-- A customer's request zone noted player 0 (the host) when it appeared; for a
+-- guest's press it notes the guest, then gets the host back.
+onHost(true)
+R.hostPawnObj = H.obj("Player_Character_C", { GetAddress = function() return 0xF610 end })
+R.zone = H.obj("Request-QuestZone_ConsoleRental_C", { ["ref Player Character"] = R.hostPawnObj,
+    K2_GetActorLocation = function() return { X = 2450, Y = -1650, Z = 95 } end })
+R.realAll2 = UE.findAll
+UE.findAll = function(short)
+    if short == "Request-QuestZone_C" then return { R.zone } end
+    return R.realAll2(short)
+end
+guestPC.Pawn["Look At Test"] = function(self) R.seenRef = R.zone["ref Player Character"] end
+guestPC.Pawn["InpActEvt_Input_Secondary-Trigger_K2Node_EnhancedInputActionEvent_23"] = function() end
+R.now = R.now + 1
+upHook(guestPC, { X = 2400, Y = -1700, Z = 150 }, UE.rotArg({ Pitch = 0, Yaw = 0, Roll = 102 }))
+require("rpcchan").pump()
+check("a customer's request zone takes what the guest hands over from the guest, during its press",
+      R.seenRef == guestPC.Pawn, tostring(R.seenRef))
+check("and has the host's pawn again after it", R.zone["ref Player Character"] == R.hostPawnObj,
+      tostring(R.zone["ref Player Character"]))
+UE.findAll = R.realAll2
+
+-- Leave everything as it was.
+H.staticObjects[R.CART], H.staticObjects[R.END] = nil, nil
+Repairs.reset()
+require("hud").notice = R.real.notice
+UE.findFirst, UE.findAll, UE.GetGameMode, os.clock = R.real.findFirst, R.real.findAll, R.real.gm, R.real.clock
+hostPC.ServerSetSpectatorLocation = R.real.send
+guestPC.Pawn, guestPC.GetAddress, hostPC.GetAddress = R.real.guestPawn, R.real.guestAddr, R.real.hostAddr
+hostPC.Pawn = R.real.hostPawn
+onHost(true)
+end
+
 print("\n-- choosing your character: made on the character screen, kept, worn everywhere --")
 -- REQUESTED (16 Oct 2026): "can we give people the option to choose their
 -- character", then "show all possible characters". A guest's choice crosses to
@@ -4960,6 +5594,85 @@ check("the host puts the pieces together and that guest looks so to everyone",
 hook({ get = function() return guestPC end }, { get = function() return FName("/Game/Maps/L_Player_Store_01") end })
 Character.tick(os.clock())
 check("a real ServerNotifyLoadedWorld is left alone", #Character._inbox() == 0, "queued")
+
+-- One character per store. REQUESTED (16 Oct 2026): "i want it to save the
+-- character i make per save".
+do
+    local S = { file = "RewindTogether.character-stores-smoke.txt", realGM = UE.GetGameMode }
+    Character._setFile(S.file)
+    os.remove(S.file)
+    -- A 1.8.0 file: one look, for every game.
+    local fh = io.open(S.file, "w")
+    fh:write("asked=1\n")
+    for k, v in pairs(look) do fh:write(k, "=", v, "\n") end
+    for k, v in pairs(Creator.toFields(dorothy.spec)) do fh:write(k, "=", v, "\n") end
+    fh:close()
+    S.look2 = {}
+    for k, v in pairs(look) do S.look2[k] = v end
+    S.look2.m = look.m .. "_other"
+    Character.reset()
+    Character._reload()
+    Character._enter("0000000a", "save 1")
+    S.store, S.worn, S.asked = Character._now()
+    check("a 1.8.0 character: the first time in a store it is worn while the screen asks",
+          S.store == "0000000a" and S.worn ~= nil and S.worn.m == look.m and S.asked == false,
+          ("store %s, worn %s, asked %s"):format(tostring(S.store), S.worn and S.worn.m or "nothing", tostring(S.asked)))
+    Character._wear(S.look2, Creator.copy(dorothy.spec))
+    Character._enter("0000000b", "save 2")
+    S.store, S.worn, S.asked = Character._now()
+    check("a second store, the first time: the character made last is worn while the screen asks",
+          S.worn ~= nil and S.worn.m == S.look2.m and S.asked == false, S.worn and S.worn.m or "nothing")
+    Character._wear(look, Creator.copy(dorothy.spec))
+    Character._enter("0000000a", "save 1")
+    S.store, S.worn, S.asked = Character._now()
+    check("back in the first store: its own character, and no screen", S.worn ~= nil and S.worn.m == S.look2.m
+          and S.asked == true, S.worn and S.worn.m or "nothing")
+    Character.reset()
+    Character._reload()
+    Character._enter("0000000b", "save 2")
+    S.store, S.worn, S.asked = Character._now()
+    check("each store's character is in the file: the second store's own after a restart",
+          S.worn ~= nil and S.worn.m == look.m and S.asked == true, S.worn and S.worn.m or "nothing")
+    S.text = ""
+    fh = io.open(S.file, "r")
+    if fh then S.text = fh:read("a") fh:close() end
+    check("the file keeps a section per store, named by its key", S.text:find("[store 0000000a]", 1, true) ~= nil
+          and S.text:find("[store 0000000b]", 1, true) ~= nil and S.text:find("label=save 2", 1, true) ~= nil, S.text:sub(1, 200))
+    check("a store's key is the same every time, 8 hex digits", Character._keyOf("id/Player_Save1") ==
+          Character._keyOf("id/Player_Save1") and Character._keyOf("id/Player_Save1"):match("^%x%x%x%x%x%x%x%x$") ~= nil
+          and Character._keyOf("id/Player_Save1") ~= Character._keyOf("id/Player_Save2"), Character._keyOf("id/Player_Save1"))
+
+    -- The host works out its store from the GameMode's save slot and tells its guests.
+    S.gm = H.obj("Core_Gamemode_C", { ["Save Slot Name"] = "Player_Save3" })
+    UE.GetGameMode = function() return S.gm end
+    H.theWorld.NetDriver.ServerConnection = nil
+    UE.beginFrame()
+    Character.reset()
+    sentStrings = {}
+    Character.tick(os.clock())
+    S.hostStore = Character._now()
+    S.wire = nil
+    for _, s in ipairs(sentStrings) do if s:find("|chr|", 1, true) then S.wire = s end end
+    check("the host's store is its save slot, and its guests are told which it is",
+          S.hostStore ~= nil and S.wire ~= nil and S.wire:find("k=" .. S.hostStore, 1, true) ~= nil,
+          ("store %s, wire %s"):format(tostring(S.hostStore), tostring(S.wire)))
+    UE.GetGameMode = function() return nil end
+    H.theWorld.NetDriver.ServerConnection = H.obj("NetConnection", { __isActor = false })
+    UE.beginFrame()
+    Character.reset()
+    if S.wire then H.hooks["/Script/Engine.PlayerController:ClientMessage"](guestPC, S.wire) end
+    require("rpcchan").pump()
+    Character.tick(os.clock())
+    S.guestStore, S.worn, S.asked = Character._now()
+    check("a guest is in the same store as its host, the first time there: the screen will ask",
+          S.guestStore ~= nil and S.guestStore == S.hostStore and S.asked == false, tostring(S.guestStore))
+
+    H.theWorld.NetDriver.ServerConnection = nil
+    UE.GetGameMode = S.realGM
+    UE.beginFrame()
+    os.remove(S.file)
+    Character._setFile(FILE)
+end
 
 -- Leave everything as it was.
 os.remove(FILE)

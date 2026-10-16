@@ -1,6 +1,6 @@
 # Multiplayer audit: every part of Retro Rewind, host vs guest
 
-Started 16 Oct 2026 (Rewind Together 1.7.5), brought up to date for 1.8.0. Source: the game's cooked Blueprints, read with
+Started 16 Oct 2026 (Rewind Together 1.7.5), brought up to date for 1.9.0. Source: the game's cooked Blueprints, read with
 `bpdump` (482 Blueprint classes in the UE4SS header dump; 510 `GetGameMode` call sites in 150
 Blueprints, `bp/_global_getgamemode_callsites.tsv` in the decomp folder). Nothing here is the
 game's code; it is what the code does, so the mod can be planned. Status measured on two copies
@@ -28,7 +28,7 @@ by design, TODO = planned, UNTESTED = built, not yet seen working live.
 | System | Classes | Guest status | Notes |
 |---|---|---|---|
 | Walking, bodies, looks | Player_Character_C, bodies.lua | OK | Bodies turn like people: head follows the view, body turns past 60 degrees or when walking. The "walking in circles" was the borrowed animation blueprint's turn-on-the-spot steps at full weight (its turn input sat at 0; 0.5 is standing still) |
-| Choosing your character | character.lua, charscreen.lua, creator.lua | OK | The character screen (the game's own pause-menu frame, buttons and font): the 14 named regulars, or every body, skin, hair and colour, beard, glasses, top/bottom/shoes and colour, and height the town has; opens by itself the first time, from the pause menu, on F4. Kept in RewindTogether.character.txt; a guest's choice reaches the host as FNames over ServerNotifyLoadedWorld. Height is the body's Character Scale, as for NPCs |
+| Choosing your character | character.lua, charscreen.lua, creator.lua | OK | The character screen (the game's own pause-menu frame, buttons and font): the 14 named regulars, or every body, skin, hair and colour, beard, glasses, top/bottom/shoes and colour, and height the town has; opens by itself the first time in each store (on the character made last), from the pause menu, on F4. Kept in RewindTogether.character.txt, one section per store (a key from the host's Steam ID and its "Save Slot Name", sent to guests as "chr"); a guest's choice reaches the host as FNames over ServerNotifyLoadedWorld. Height is the body's Character Scale, as for NPCs |
 | Carrying, shelving tapes | PickupActor_C, Shelve_C | OK | |
 | What another player carries | bodies.lua hand sockets | OK | The item sits on the body's hand (socket moved by minus the item's offset) |
 | Till: scan, cash, change, card | MembershipMachine_C, CheckOut_C, Scanner_Checkout_C | OK | 1.7.5: bill and drawer within 0.1 s of a press |
@@ -37,20 +37,20 @@ by design, TODO = planned, UNTESTED = built, not yet seen working live.
 | The next morning | Core_Gamemode "Create a new day" | OK | The game puts only the host at the start zone; guests are now put beside them, facing the same way |
 | Customers, staff, talk | AI_*, TalkSystem_C | OK | npcsync.lua, talksync.lua |
 | Return desk (drop box, scan, rewind, store) | Return_C, DropBox_C, Scanner_Dropbox_C, Rewinder_C, Cursor-Movement_Distance_C | OK | machines.lua sits the guest at the host's desk and replays clicks and drags; mirror.lua shows the desk's screen, case and rewinder on the guest |
-| Repair station (broken tapes) | RepairStation_C, Cartridge_BrokenTape_C, Cartridge_Screw_C | NO (guarded) | A guest's click on it is not replayed: its Interaction never asks "Can Player use the machine?", so the replay would have sat the guest at the HOST's desk and its glide would have carried the host there. The repair itself is still the host's (plan: the guest's own desk plays it, the host applies the result) |
+| Repair station (broken tapes) | RepairStation_C, Cartridge_BrokenTape_C, Cartridge_Screw_C | OK (1.9.0) | repairs.lua: a tape's Error is not replicated, so the host tells each guest the state of the tape in its hand ("rph") and the guest's copy is given it; the guest's own desk plays the minigame on its own screen (the zones, tools and tape model are the local player's) and at its end (Repair cartridge End, hooked) action 24 has the host mend the real tape in that guest's hand (Set Error 1, sticker off, Change XP 2). Leaving mid-repair puts the tape back in the guest's hands. Broken stickers through mirror.lua. Steam stat 16 is not counted for guests. Measured live: a whole repair with real clicks (open, screwdriver, three screws, scissors, two cuts), host XP +2 |
 
 ### Office and UI machines (show a UI on the player's own screen)
 | Machine | Guest status | Plan |
 |---|---|---|
 | Office computer | OK (1.7.4) | computer.lua |
 | Catalogue | OK (1.8.0) | uimachines.lua: cards uncovered as far as the store's level goes, station cards drawn from the guest's own machines (the card's own Generate Text, the machine's soft picture handed back); Buy = action 21, placed by the host's own widget handler (no card made: it is never read) one per tick. Verified: a poster frame and the cotton candy machine |
-| Staff book (hire/fire) | NO | Both pages empty on a guest (Market / AI Director are host-only). Firing and jobs work through the employee's talk menu (talksync.lua). Plan: a probe widget on the host fires the game's own card events (an FStaff holds 7 TSets) |
-| Calendar (rewards, weather) | NO | Placeholders on a guest; claims greyed. Plan: a claim is one no-argument event on the host's slot |
+| Staff book (hire/fire) | OK (1.9.0) | staffbook.lua: the host sends who is in the book ("stf": name, pay, skills, photo, traits, job, about, favourite movie; the traits TSet reads with ForEach); the guest's game draws its own cards (plain numbers into the card's Staff before AddChild, so its Construct writes pay and skill words; texts, photo and trait lines after; again after every tab switch). Hire, fire and job = action 22 (what, the card's place, its pay): the host builds an unseen copy of the book's screen, has it draw the page from its GameMode and clicks that card's own button, inside asGuest (a refusal goes to the stand-in HUD; the guest shows the game's own string-table words). Steam stat 8 and achievements 8/9 count on the host's account. Measured live: both pages drawn, a job change, the level-20 refusal, a fire (the employee walked out) and a hire (walked in on both screens) |
+| Calendar (rewards, weather) | OK (1.9.0) | calendar.lua: the guest's own machine is given its weather actor and "Save Load", and its own Init Calendar draws the list (the guest's Steam), weather and check marks; the host's year and each day's events ("cal") are drawn with the game's own day cells (icons and bonus tooltips); each row's claimed mark is the store's. A Claim = action 23: the host clicks its own row (Achievement Reclame, +$100, +50 XP). Measured live: the guest's page identical to the host's, a claim paid the store once. A new day's redraw on a guest is untested live |
 | Store expansion | OK (1.8.0) | The host names each room's expansion ("uim" x0..x5); the guest links its own map (Set Reference And Construct); a click = action 20, the host's own Click Map Button Event |
 | Store level | OK (1.8.0) | Cross-mark and genre post-its drawn from the mirrored level, on each page turn |
 | Store name | OK (1.8.0) | The guest's own editor; on close its sign goes to the host as one FName ("RTSN:", the name in hex), the host's sign takes it, worldsync gives it to all (and now the font) |
 | Sidewalk sign | OK (1.8.0) | The host's ad on every sign ("uim" ss); a guest's pick = action 19 |
-| Console rental mat | UNTESTED | Worked by world clicks, which are replayed (excluded from the screen-machine guard); needs level 21 and a returned console |
+| Console rental (mat and station) | OK (1.9.0) | World clicks, replayed on the host (excluded from the screen-machine guard). The guest's copies get the host's monitor (Status For Monitor, the scan's progress bar), slot lights and console states ("crs"; the guest's copies always read State 1, so its own shelf and mat never act on their own), the mat's drawers and the stickers through mirror.lua, and a console copy whose own Verify turned its physics on is put back on its root. Measured live: put on the mat, the scan on the guest's monitor, taken back, shelved |
 | Custom movie station | n/a | Not sold in this build (not in the catalogue's station list) |
 
 ### Concessions
@@ -89,6 +89,16 @@ by design, TODO = planned, UNTESTED = built, not yet seen working live.
   repair desk, the sidewalk sign and the store name sign do not ask, and the glide that follows
   runs on player 0 - the host. Clicks on screen machines (except the console rental mat) are no
   longer replayed.
+- **A guest carrying something who clicked a screen machine lost it on the host.** The guest's own
+  game opened its own copy (the repair desk took the broken tape), while the host replayed the
+  click: with something in hand the host's look-at did not land on the machine, so the click put
+  the tape down on the floor in front of the desk (measured). The guest no longer sends a click
+  whose look-at is a screen machine (guestinput.lua onPress).
+- **A guest's console copy fell out of its own actor.** About 20 s after a console appears, the
+  guest's copy runs its own "Verify if the console is stored somewhere", finds none of its guards
+  hold on a guest, lifts itself and turns its physics on; its mesh then stays where it was while
+  the actor follows the host (a VHS player on the host's mat was still on the guest's floor at the
+  delivery spot). repairs.lua turns that physics off again and puts the copy where the host's is.
 
 ## Three ways a machine works for a guest
 

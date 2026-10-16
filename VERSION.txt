@@ -1,5 +1,5 @@
 Rewind Together
-Version: 1.8.0
+Version: 1.9.0
 Built:   2026-10-16
 Game:    Retro Rewind (Steam AppID 3552140)
 Engine:  Unreal Engine 5.4
@@ -13,6 +13,47 @@ Unreal refuses mismatched builds.
 Check with:  rt.status   in the game's console (press ~ twice,
 type it, press Enter), or the launcher's Play tab.
 
+
+CHANGES IN 1.9.0  -  a character for every store, and the
+                     store's last machines for guests.
+------------------------------------------------------
+  * NEW: each store keeps its own character. The first time you
+    are in a store (your own save or a friend's) the character
+    screen opens by itself, on the character you made last;
+    DONE keeps a new one for this store, CANCEL keeps the one
+    you have on. The pause menu's "Character" and F4 change it
+    at any time.
+
+  * NEW: guests can use the STAFF BOOK. Both pages show the
+    host's applicants and employees with the game's own cards
+    (photo, pay, skills, traits). Hire, let go and change an
+    employee's job, exactly as the host's book would.
+
+  * NEW: guests can claim the CALENDAR's rewards. The guest's
+    calendar shows the host's month, weather and the store's
+    claimed rewards; a Claim pays the store once, whoever
+    claims it. (How it updates on a guest when a new day starts
+    has not been tried live yet.)
+
+  * NEW: guests can use the REPAIR DESK. A broken tape shows
+    its broken sticker on every screen; the repair is played
+    on the guest's own screen (screwdriver, screws, scissors)
+    and the tape comes back mended for everyone, with the
+    store's XP.
+
+  * NEW: guests can use the CONSOLE RENTAL: put a returned
+    console on the mat, watch the scan on the monitor, take it
+    back and put it on the shelf. The monitor, shelf lights and
+    stickers match the host's.
+
+  * Fixed: a guest carrying something who clicked a screen
+    machine (the repair desk, the catalogue...) lost what they
+    were carrying on the host's screen.
+
+  * Fixed (likely): a guest could not hand a customer what they
+    asked for (a console to rent, a movie, popcorn, a slushie,
+    cotton candy) - the game's hand-over spot only looked at
+    the host's hands. Not tried live yet.
 
 CHANGES IN 1.8.0  -  choose your character, and the store's
                      machines for guests.

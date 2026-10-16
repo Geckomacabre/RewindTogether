@@ -40,6 +40,13 @@ def claude_pid():
     return int(out.strip()) if out.strip() else 0
 
 
+def windowed(slot):
+    """The user's own settings are borderless full screen, and each copy goes
+    back to that size on load and on joining - after which SetWindowPos alone
+    does not hold. A windowed resolution of the layout's size does."""
+    ask(slot, 'lua return tostring(require("ue").Exec("r.SetRes 1254x705w"))')
+
+
 def layout():
     """The user watches all three: Claude left, host middle, guest right."""
     p = pids()
@@ -128,6 +135,8 @@ def host_only(launch=True):
     time.sleep(5)
     print(ask("A", "rt.host"))
     wait(lambda: "ListenServer" in ask("A", 'lua return require("ue").NetModeName()'), 60, "listen server")
+    windowed("A")
+    layout()
     print("host up, pid", a)
 
 
@@ -143,6 +152,9 @@ def guest_only(address="127.0.0.1"):
     time.sleep(6)
     print(ask(slot, "rt.join " + address))
     wait(lambda: "Client" in ask(slot, 'lua return require("ue").NetModeName()'), 90, "guest %s to connect" % slot)
+    time.sleep(5)              # the store loads on the guest after it connects
+    windowed(slot)
+    layout()
     print("guest %s joined, pid %d" % (slot, b))
 
 

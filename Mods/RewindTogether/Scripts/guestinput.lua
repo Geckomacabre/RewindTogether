@@ -107,6 +107,14 @@ local ACTIONS = {
     [19] = { label = "the sidewalk sign's ad", special = "sidewalkAd" },
     [20] = { label = "a room on the expansion map", special = "expansionRoom" },
     [21] = { label = "a catalogue order", special = "catalogueOrder" },
+    -- Not keys either: a click in the staff book (staffbook.lua: X hire, fire
+    -- or a job, Y the card's place in its list, Z its pay) and a calendar
+    -- reward claimed (calendar.lua: X the achievement); numbered in Pitch.
+    [22] = { label = "the staff book", special = "staffBook" },
+    [23] = { label = "a calendar reward", special = "calendarClaim" },
+    -- And the guest's own repair desk has mended the tape in its hand
+    -- (repairs.lua); numbered in Pitch.
+    [24] = { label = "a repair finished", special = "repairDone" },
 }
 
 -- Machines whose clicks stay on the guest's screen although they are worked
@@ -228,6 +236,15 @@ local function onPress(code)
     if GuestInput.atScreenMachine() then return end
     local pc = UE.GetPlayerController()
     if not UE.alive(pc) or not UE.valid(UE.GetPawn()) then return end
+    -- A click on a screen machine opens this game's own copy (see
+    -- CLICK_THROUGH below), so it is not the host's either. The host's own
+    -- check can miss it: with something in hand its look-at is where that
+    -- would be put down, not the machine. MEASURED (16 Oct 2026): a guest
+    -- carrying a broken tape clicked the repair desk; its own desk took the
+    -- tape, and on the host the replayed click put it down on the floor.
+    if (code == 1 or code == 2) and GuestInput._screenMachine(UE.TryGet(UE.GetPawn(), "ref Object Look At")) then
+        return
+    end
     local cm = UE.TryGet(pc, "PlayerCameraManager")
     if not UE.valid(cm) then return end
     local loc, rot = nil, nil
@@ -727,6 +744,56 @@ local function screenMachine(o)
     return UE.alive(o) and UE.TryGet(o, "Hide Cursor Interface while Using") == true
        and not CLICK_THROUGH[UE.ClassNameOf(o) or ""]
 end
+GuestInput._screenMachine = screenMachine      -- onPress, above
+
+--[[
+    WHAT A CUSTOMER ASKED FOR IS HANDED OVER IN A ZONE THAT KNOWS ONE PLAYER.
+    A customer's request - a console to rent, a movie, popcorn, a slushie,
+    cotton candy - puts a Request-QuestZone_C by the counter, and the zone
+    notes player 0 when it appears (ReceiveBeginPlay @1974-@2075): on the
+    host, the host. Everything it does goes through that pawn: it shows its
+    collision only while THAT pawn holds something (PlayerIsLookingAt
+    @1036-@1425), accepts only what THAT pawn holds (Do I accept the player
+    object?) and takes it from THAT pawn's hand (Get the Object from Player
+    @1697-@1878). So a guest's replayed click found the zone hidden, or was
+    checked against the host's hands. For the length of a guest's press the
+    zones near it note that guest, as they would have noted a player who was
+    player 0; then they get the host back.
+]]
+local ZONE_CLASS = "Request-QuestZone_C"
+local ZONE_PATH  = "/Game/VideoStore/asset/character/questgiver/Request-QuestZone.Request-QuestZone_C"
+local ZONE_NEAR  = 800.0       -- cm (XY): a zone the guest could be reaching for
+GuestInput._lendZonesOn = true -- tests and the dev bridge can turn it off
+
+function GuestInput._lendZones(pawn)
+    if not GuestInput._lendZonesOn then return nil end
+    local at = nil
+    pcall(function() at = UE.vec(pawn:K2_GetActorLocation()) end)
+    if not at then return nil end
+    UE.knowClass(ZONE_CLASS, ZONE_PATH)
+    local lent = nil
+    for _, z in ipairs(UE.findAll(ZONE_CLASS) or {}) do
+        local v = nil
+        if UE.alive(z) then pcall(function() v = UE.vec(z:K2_GetActorLocation()) end) end
+        if v and (v.X - at.X) ^ 2 + (v.Y - at.Y) ^ 2 <= ZONE_NEAR * ZONE_NEAR then
+            local was = UE.TryGet(z, "ref Player Character")
+            if not UE.sameObject(was, pawn) and UE.TrySet(z, "ref Player Character", pawn) then
+                lent = lent or {}
+                lent[#lent + 1] = { zone = z, was = UE.valid(was) and was or nil, pawn = pawn }
+            end
+        end
+    end
+    if lent then stats.zonesLent = (stats.zonesLent or 0) + #lent end
+    return lent
+end
+
+function GuestInput._returnZones(lent)
+    for _, l in ipairs(lent or {}) do
+        if UE.alive(l.zone) and UE.sameObject(UE.TryGet(l.zone, "ref Player Character"), l.pawn) then
+            UE.TrySet(l.zone, "ref Player Character", l.was)
+        end
+    end
+end
 
 local function replay(pc, code, loc, rot)
     local action = ACTIONS[code]
@@ -766,6 +833,9 @@ local function replay(pc, code, loc, rot)
     if action.special == "sidewalkAd" or action.special == "expansionRoom" or action.special == "catalogueOrder" then
         return require("uimachines").onGuest(pc, pawn, action.special, loc, rot)
     end
+    if action.special == "staffBook" then return require("staffbook").onGuest(pc, pawn, loc, rot) end
+    if action.special == "calendarClaim" then return require("calendar").onGuest(pc, pawn, loc, rot) end
+    if action.special == "repairDone" then return require("repairs").onGuest(pc, pawn, loc, rot) end
     if dayIsOver() then
         Log.debug("ignored a guest's %s: the day is over on the host", action.label)
         return
@@ -815,6 +885,7 @@ local function replay(pc, code, loc, rot)
     pcall(function() pc:SetControlRotation(rot) end)
 
     local skipped = nil
+    local lent = GuestInput._lendZones(pawn)
     local ok, swaps, err = asGuest(pc, function()
         pawn["Look At Test"](pawn)
         local at = UE.TryGet(pawn, "ref Object Look At")
@@ -831,6 +902,7 @@ local function replay(pc, code, loc, rot)
         -- was looking at.
         pcall(function() pawn["Trace from Camera Stop looking At"](pawn, true, true) end)
     end)
+    GuestInput._returnZones(lent)
 
     if skipped then
         screenSkipped = screenSkipped + 1

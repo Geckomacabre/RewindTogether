@@ -493,6 +493,9 @@ handlers["rt.diag"] = function(_, dev)
     for _, line in ipairs(require("character").report()) do out(dev, "  " .. line) end
     for _, line in ipairs(require("concessions").report()) do out(dev, "  " .. line) end
     for _, line in ipairs(require("uimachines").report()) do out(dev, "  " .. line) end
+    for _, line in ipairs(require("staffbook").report()) do out(dev, "  " .. line) end
+    for _, line in ipairs(require("calendar").report()) do out(dev, "  " .. line) end
+    for _, line in ipairs(require("repairs").report()) do out(dev, "  " .. line) end
     out(dev, "  Set LogLevel = \"debug\" in config.lua for full detail.")
     return true
 end

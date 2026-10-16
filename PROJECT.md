@@ -52,6 +52,12 @@ each bug actually was.
   `require("guestinput")._onPress(code)` sends exactly what the key poll sends; run the pawn's
   own `InpActEvt_*` event first if the guest's local game should react too. Codes: 1 LMB,
   2 RMB, 3 E, 4 V, 5 B, 6 K, 7 left the till, 8 skin picked, 9 Space at the till.
+- Aim in one bridge call and press in the next: the camera manager's rotation lags
+  `SetControlRotation` by a frame, so a press sent in the same call carries the old aim to the
+  host (measured: the console went down on the floor instead of on the shelf).
+- The user's display settings are borderless full screen, and every copy snaps back to that size
+  on load and on joining. `coop_test.py` runs `r.SetRes 1254x705w` on each copy after it has
+  loaded or joined, then lays the windows out (Claude, host, guest side by side).
 - Hot reload (Ctrl+R in a game window) reloads **both** copies (UE4SS reads the key globally;
   that is why the logs show two "loading..." per reload) and swaps the bridge slots. It is safe
   to use now: RewindNative empties UE4SS's member-name cache on every reload (see the gotchas),
@@ -315,9 +321,12 @@ each bug actually was.
 | `charscreen.lua` | The character screen: the game's pause-menu frame and buttons, a figure in the world, every row |
 | `creator.lua`, `wardrobe.lua` | What a character can be made of (generated from the dumps by `dev/make_wardrobe.py`), and a spec -> look |
 | `machines.lua` | A guest seated at the HOST's look-around machines (return desk, snack shelves), clicks and drags replayed |
-| `mirror.lua` | The host's machine animations (the desk, the rewinder, the phone) on the guests' copies |
+| `mirror.lua` | The host's machine animations (the desk, the rewinder, the phone, broken stickers, the console rental mat) on the guests' copies |
 | `concessions.lua` | Popcorn, slushie, cotton candy: made on the guest's own copy, made real by the host |
 | `uimachines.lua` | The catalogue, the expansion map, the sidewalk sign, the store name and the level board for guests |
+| `staffbook.lua` | The staff book for guests: both pages drawn from the host's Market and AI Director with the game's own cards; hire, fire and job (action 22) clicked on the host's own unseen copy of the book |
+| `calendar.lua` | The office calendar for guests: the guest's own machine started with its own weather actor, the host's month page and claimed rewards on it; a Claim (action 23) is the host's own task-list row |
+| `repairs.lua` | The repair desk and the console rental for guests: the host says which state the tape in a guest's hand is in, the guest's own desk plays the repair and the host mends the real tape (action 24); the console rental's monitor, slot lights and console states on the guest's copies |
 | `worldsync.lua` | Sign, expansions, season level, sky/lights/fog/collection values, stripes |
 | `npcsync.lua` | NPC looks (body, clothes, tints, hair and its colour, mouth and eyes, size and walk rate, staff badge) + AnimBP inputs, emotion, thought bubble and basket, matched by position; the cash a customer holds out made to replicate; on a guest it stops the guest's own AI Director and removes the NPCs that spawned |
 | `guestinput.lua` | Guest presses (RMB/LMB/E/V/B/K) replayed on the guest's pawn on the host; the till for guests (entry, glides, W/Space, the cash drawer, the register's screen and the change counted onto the counter mirrored); the guest's skin picker and its choice; each guest's tool; the guest's own placement preview in build mode (and its turns, action 10); the host's HUD after a replay; no replays while the end-of-day summary is up |
