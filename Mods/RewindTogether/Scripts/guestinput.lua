@@ -102,6 +102,14 @@ local sendBill                -- host: the register's screen, to the guests (def
 local sendGhost               -- host: a guest's placement preview, to that guest (build mode, below)
 local rotateGhost             -- host: a guest turned the furniture it carries (build mode, below)
 local hintsClearAt = nil      -- host: when to wipe the till's hints off the host's HUD
+-- REPORTED (live test, 16 Oct 2026, the guest's recording): ringing customers
+-- up felt "super laggy" - a tape scanned, and the register's screen on the
+-- guest still showed the desktop, then went dark, and the bill came about two
+-- seconds later. The host looked at its screen every 0.5 s and its drawer every
+-- 0.2 s, on top of a tick each way and the internet. For a while after each
+-- press at the till, both are looked at every tick (and sent when changed).
+local TILL_BURST = 2.0        -- s after a press at the till
+local tillBurstUntil = 0      -- host
 
 --- The till's hints ("W leave the register", the drawer's) are drawn on the
 --- GameMode's one HUD - the host's - by steps that run after a guest's action
@@ -779,7 +787,7 @@ local drawerSent, drawerSentAt = nil, 0
 local DRAWER_EVERY, drawerNext = 0.2, 0
 
 function sendDrawer(now)
-    if now < drawerNext then return end
+    if now < drawerNext and now >= tillBurstUntil then return end
     drawerNext = now + DRAWER_EVERY
     local co = UE.findFirst("CheckOut_C")
     if not UE.alive(co) then return end
@@ -917,7 +925,7 @@ end
 --- Host: the register's screen, every half second, to every guest when it
 --- changed (and every few seconds regardless, for a guest who just came).
 function sendBill(now)
-    if now < billNext then return end
+    if now < billNext and now >= tillBurstUntil then return end
     billNext = now + BILL_EVERY
     local m = tillMachine()
     if not m then return end
@@ -1559,6 +1567,7 @@ function GuestInput.stats() return stats end
 
 -- For the dev bridge only: a press exactly as the key poll makes it.
 GuestInput._onPress = onPress
+GuestInput._tillBurst = function() tillBurstUntil = os.clock() + TILL_BURST end
 
 function GuestInput.reset()
     tickStopped = {}
@@ -1580,7 +1589,12 @@ end
 
 function GuestInput.init(config)
     cfg = config
-    Chan.onAction(function(pc, code, loc, rot) Log.guard("guest action", replay, pc, code, loc, rot) end)
+    Chan.onAction(function(pc, code, loc, rot)
+        Log.guard("guest action", replay, pc, code, loc, rot)
+        -- The same tick's sendDrawer / sendBill (tickHost runs after the pump)
+        -- already see what the press did.
+        if tillUser then tillBurstUntil = os.clock() + TILL_BURST end
+    end)
     Chan.on("me", function(fields) Log.guard("guest tool", onMe, fields) end)
     Chan.on("till", function(fields) Log.guard("cash drawer", onDrawer, fields) end)
     Chan.on("bill", function(fields) Log.guard("register screen", onBill, fields) end)

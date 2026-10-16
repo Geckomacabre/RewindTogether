@@ -304,11 +304,15 @@ local MARK_TOLERANCE = 0.05
 
 -- Guest actions ride the same RPC with Roll = ACTION_BASE + code (1..ACTION_MAX),
 -- far from both 0 and the legacy mark. Sent twice; repeats of the same action
--- from the same guest inside ACTION_COLLAPSE are one press.
+-- from the same guest inside ACTION_COLLAPSE are one press. The two copies
+-- leave in the same frame (sendAction), so the window only has to cover
+-- them: at 0.12 s it also swallowed real clicks - counting change out of the
+-- drawer is click-click-click, and a dropped click on the host left the
+-- guest's own drawer ahead of the host's (live test, 16 Oct 2026).
 local ACTION_BASE     = 100
 local ACTION_MAX      = 40
 local ACTION_REPEATS  = 2
-local ACTION_COLLAPSE = 0.12
+local ACTION_COLLAPSE = 0.04
 local actionHandler   = nil
 local lastAction      = {}
 

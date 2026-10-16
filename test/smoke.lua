@@ -1212,6 +1212,25 @@ check("the host decodes it once (sent twice, unreliable)", #actions == 1 and act
       ("%d action(s), code %s"):format(#actions, tostring(actions[1] and actions[1].code)))
 check("the camera survives the trip", actions[1] and actions[1].loc.X == 2075 and actions[1].rot.Yaw == 180,
       "location or rotation mangled")
+-- Two real clicks a tenth of a second apart (counting change out of the
+-- drawer) are two presses, each still sent twice.
+do
+    local clockWas = os.clock
+    local t = clockWas() - 10         -- behind: a later section's first click must not look like a repeat
+    os.clock = function() return t end
+    for _, gap in ipairs({ 0, 0.1 }) do
+        t = t + gap
+        upSends = {}
+        Chan.sendAction(1, { X = 1, Y = 1, Z = 1 }, { Pitch = 0, Yaw = 0, Roll = 0 })
+        for _, s_ in ipairs(upSends) do upHook(rpcGuestPC, s_.loc, s_.rot) end
+    end
+    local before = #actions
+    Chan.pump()
+    os.clock = clockWas
+    check("two clicks a tenth of a second apart are two presses on the host", #actions - before == 2,
+          ("%d press(es)"):format(#actions - before))
+    for i = #actions, before + 1, -1 do table.remove(actions, i) end
+end
 upHook(rpcGuestPC, { X = 1, Y = 2, Z = 3 }, { Pitch = 0, Yaw = 10, Roll = 0 })
 Chan.pump()
 check("the engine's own spectator sync is still not an action", #actions == 1,
@@ -2966,6 +2985,31 @@ check("the change counted onto the counter is made to replicate - SetReplicates 
       ("bReplicates=%s set while off=%s"):format(tostring(counted.bReplicates), tostring(counted.setWhileOff)))
 check("the drawer's own stacks are left alone (every machine has them)", stack.bReplicates == false,
       tostring(stack.bReplicates))
+-- A guest's press at the till: the screen goes out on the next tick, not the
+-- next half second (the guest saw the bill ~2 s after scanning).
+do
+    local clockWas = os.clock
+    local t = clockWas() + 1000       -- past any window an earlier section opened
+    os.clock = function() return t end
+    GuestInput3.tickHost()            -- whatever was due goes now; the next look is half a second away
+    hostW["txt_Member-name_checkoutpage"] = textBlock("Grace Hopper")
+    local function billSince(n)
+        for i = n + 1, #sentStrings do
+            if sentStrings[i]:find("RT1|bill", 1, true) and sentStrings[i]:find("Grace Hopper", 1, true) then return true end
+        end
+        return false
+    end
+    local before = #sentStrings
+    GuestInput3.tickHost()
+    local waited = not billSince(before)
+    GuestInput3._tillBurst()
+    before = #sentStrings
+    GuestInput3.tickHost()
+    check("after a guest's press at the till, the register's screen goes out on the next tick",
+          waited and billSince(before), ("held to the half second: %s, sent after the press: %s")
+              :format(tostring(waited), tostring(billSince(before))))
+    os.clock = clockWas
+end
 
 -- The guest's machine: the desktop page, the screensaver on.
 local calls = {}

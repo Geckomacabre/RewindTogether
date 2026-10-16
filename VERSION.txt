@@ -1,6 +1,6 @@
 Rewind Together
-Version: 1.7.4
-Built:   2026-10-15
+Version: 1.7.5
+Built:   2026-10-16
 Game:    Retro Rewind (Steam AppID 3552140)
 Engine:  Unreal Engine 5.4
 Needs:   UE4SS 3.x
@@ -12,6 +12,24 @@ Unreal refuses mismatched builds.
 
 Check with:  rt.status   in the game's console (press ~ twice,
 type it, press Enter), or the launcher's Play tab.
+
+
+CHANGES IN 1.7.5  -  a quicker register for guests.
+------------------------------------------------------
+  * FIXED: ringing customers up as a guest lagged. After a
+    scan, the guest's register screen showed the bill about
+    two seconds late: the host looked at its own screen
+    every half second and at its cash drawer five times a
+    second, on top of the trip each way. For two seconds
+    after each press at the till, the host now looks every
+    tenth of a second and sends what changed at once.
+
+  * FIXED: quick clicks at the till could be lost. Two of
+    the same click within 0.12 s counted as one on the host
+    (every click is sent twice, in case one is lost), so
+    counting change out of the drawer click-click-click
+    dropped some, and the guest's drawer ran ahead of the
+    host's. Now only the two copies of one click are merged.
 
 
 CHANGES IN 1.7.4  -  guests can order at the office computer,

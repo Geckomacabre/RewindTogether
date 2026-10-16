@@ -1,5 +1,5 @@
 =============================================================
-  REWIND TOGETHER  -  play Retro Rewind together   (v1.7.4)
+  REWIND TOGETHER  -  play Retro Rewind together   (v1.7.5)
   The simple guide. Read your part: HOST or GUEST.
 =============================================================
 

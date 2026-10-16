@@ -663,3 +663,21 @@ starts itself, sync/interaction verified, docs for strangers.
 - Smoke 417 PASS (6 new: search answered once, not found, search buy once at the card's price,
   Data payload, standee path). NOT yet run in a live game: released as 1.7.4 for the user's own
   live test (the user's call).
+
+### 1.7.5: the register lagged for a guest (2026-10-16)
+
+- Reported in the user's live test (a friend as the guest, over the internet; the guest's own
+  recording): checking customers out was "super laggy". Frame analysis of the clip (ffmpeg
+  mpdecimate, unique frames per second): no freezes over 0.2 s, 14-30 new frames a second; the
+  visible lag was the register's screen - a tape scanned, the guest's screen still on the
+  desktop page, then dark, the bill ~2 s later. Host side: sendBill looked every 0.5 s,
+  sendDrawer every 0.2 s, plus the host's 10 Hz tick for the replay and the guest's for the
+  message. Fix: a guest's action while a guest holds the till opens a 2 s window in which both
+  look every tick (the same tick's tickHost runs after Chan.pump, so the press's own effect goes
+  out at once).
+- rpcchan merged repeats of one action from one guest inside 0.12 s (each press is sent twice).
+  Both copies leave in the same frame; 0.12 s also swallowed real clicks counting change out of
+  the drawer. Now 0.04 s. Test: two clicks 0.1 s apart are two presses.
+- The guest's frame dips (14-20 fps at times in the clip) were not explained: the host is this
+  PC, the guest a friend's; measuring inside the running host would have meant restarting it.
+- Smoke 419 PASS (2 new). Host log for the session: no errors.
