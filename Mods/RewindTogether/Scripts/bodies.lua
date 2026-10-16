@@ -59,6 +59,8 @@
 local Log    = require("log")
 local UE     = require("ue")
 local Safety = require("safety")
+local Chan   = require("rpcchan")
+local NpcLook = require("npcsync").look
 
 local Bodies = {}
 
@@ -87,6 +89,8 @@ local anim = {}
 local findSequencesFor
 local lastPoll = 0
 local reported = false
+local noneSince = nil         -- when the last other player's pawn went (or none had come yet)
+local NOBODY_GRACE = 20.0     -- seconds without one before that is worth a warning
 local noDonorWarned = false
 local offWarned = false
 local nextAssetWalk = 0
@@ -136,7 +140,16 @@ end
 
 --- Point a skeletal mesh component at an asset. Returns how it worked, or nil.
 local function writeMeshAsset(comp, asset)
-    -- The setters first: they do the work SetSkeletalMesh exists to do -
+    -- SetSkinnedAssetAndUpdate(asset, bReinitPose = true) above all. The
+    -- Blueprint-facing SetSkeletalMeshAsset keeps the pose buffers sized for
+    -- the OLD mesh, which the parallel animation task then walks: npcsync.lua
+    -- measured three guest crashes on it in 1.7.0. Swapping one borrowed body
+    -- for a better one is exactly that case.
+    if pcall(function() comp:SetSkinnedAssetAndUpdate(asset, true) end)
+       and UE.valid((readMeshAsset(comp))) then
+        return "SetSkinnedAssetAndUpdate"
+    end
+    -- The setters next: they do the work SetSkeletalMesh exists to do -
     -- reinitialising the pose and re-registering - which a bare property write
     -- does not.
     for _, fn in ipairs({ "SetSkeletalMeshAsset", "SetSkeletalMesh" }) do
@@ -244,7 +257,7 @@ local function findDonor()
             local comp = UE.TryGet(npc, "Mesh")
             if UE.alive(comp) then
                 local donor = describeComponent(comp, className, true)
-                if donor then return donor end
+                if donor then donor.npc = npc return donor end
             end
         end
     end
@@ -268,6 +281,7 @@ local function findDonor()
             local comp = UE.TryGet(npc, "Mesh")
             if UE.alive(comp) then
                 local donor = describeComponent(comp, UE.ClassNameOf(npc), true)
+                if donor then donor.npc = npc end
                 -- A better donor is worth searching the whole list for.
                 -- Taking the first match found one with no animation
                 -- blueprint and produced a T-posing body sliding around the
@@ -915,6 +929,291 @@ local function driveAnimation(pawn, key)
 end
 
 --------------------------------------------------------------------------
+-- What they wear: one look per player, the same on every screen
+--------------------------------------------------------------------------
+--[[
+    REPORTED (15 Oct 2026): "a lot we could be doing better, especially with
+    player pawn animations and their look; some have broken textured shirts".
+    Measured on the host, a guest's body next to a passer-by:
+      the body   SK_CHA_M_01 in the mesh's own default materials
+                 (MI_CHA_Cloth_Tshirt_01 ...), bald, the staring default face
+      the NPC    dynamic materials of those same parents, each with its own
+                 base-colour texture and tint; hair, beard and glasses as
+                 static meshes on HeadTop_EndSocket; a set mouth
+    The body was only ever an NPC's MESH, never its look. And each machine
+    borrowed from whichever NPC it found first, so the host, a guest and a
+    second guest each saw a player as somebody different.
+
+    So the HOST picks a look for every player - each off a different town NPC,
+    read with npcsync.lua's own readLook - keeps it for the session, and sends
+    it to everyone ("plook": PlayerId + the look; a PlayerId is the same on
+    every machine). Every machine dresses each other player's body in it with
+    npcsync's own calls (the body mesh by SetSkinnedAssetAndUpdate, the eight
+    slots, the eyes, a neutral face) and gives it hair, beard and glasses as
+    components of its own - a Player_Character_C has none - with
+    AddComponentByClass (measured working) and the NPC's own attachment:
+    HeadTop_EndSocket, snap location, keep relative rotation and scale
+    (AI_Base_Character "Attach Child to Skeletal" @33527). Until the host's
+    look arrives - or with a host on an older version - a body wears the look
+    of the local NPC its mesh came from.
+]]
+local LOOK_SEND_EVERY = 10.0
+local HEAD_SOCKET = "HeadTop_EndSocket"
+local IDENTITY = { Rotation = { X = 0.0, Y = 0.0, Z = 0.0, W = 1.0 },
+                   Translation = { X = 0.0, Y = 0.0, Z = 0.0 },
+                   Scale3D = { X = 1.0, Y = 1.0, Z = 1.0 } }
+-- Whose look a player gets, best first: passers-by and customers wear the
+-- town's variety; the staff wear the store's uniform.
+local LOOK_PREFER = { AI_WalkBy_Character_C = 1, AI_Client_Character_C = 1,
+                      AI_BackAlleyVendor_Character_C = 2, AI_Employee_Character_C = 3 }
+
+local looks = {}        -- PlayerId -> the look the host gave that player
+local localLook = {}    -- pawn full name -> the look of the local NPC its body came from
+local wearing = {}      -- pawn full name -> the look it has on (a signature)
+local headComps = {}    -- pawn full name -> { h = path, f = path, a = path }: its hair etc.
+local usedDonor = {}    -- host: NPC name -> the PlayerId wearing its look
+local nextLookSend = 0
+local lookStats = { assigned = 0, sent = 0, received = 0, worn = 0 }
+
+local function stateId(ps)
+    if not UE.valid(ps) then return nil end
+    local id = tonumber(UE.TryGet(ps, "PlayerId"))
+    if id == nil then pcall(function() id = tonumber(ps:GetPlayerId()) end) end
+    return id
+end
+
+local function pawnId(pawn) return stateId(UE.TryGet(pawn, "PlayerState")) end
+
+--- A look worth wearing: its top is a dressed dynamic material ("parent|
+--- texture|tint" with a texture). An NPC a moment old is still in the mesh's
+--- defaults, which is the very look being replaced.
+local function dressedLook(look)
+    return type(look) == "table" and type(look.m) == "string" and look.m ~= ""
+       and ((look.s1 or ""):match("^[^|]*|[^|]+|") ~= nil)
+end
+
+--- Host: a town NPC's look nobody wears yet, for this player.
+local function pickLook(pid)
+    local best, bestName, bestRank = nil, nil, 99
+    for _, npc in ipairs(UE.findAll(ANY_NPC) or {}) do
+        if UE.alive(npc) and UE.TryGet(npc, "bHidden") ~= true then
+            local name = nil
+            pcall(function() name = npc:GetFName():ToString() end)
+            local rank = LOOK_PREFER[UE.ClassNameOf(npc)] or 2
+            if name and usedDonor[name] == nil and rank < bestRank then
+                local look = NpcLook.read(npc)
+                if dressedLook(look) then best, bestName, bestRank = look, name, rank end
+            end
+        end
+    end
+    if not best then return nil end
+    usedDonor[bestName] = pid
+    return best
+end
+
+local function assignLooks()
+    for _, ps in ipairs(UE.findAll("PlayerState") or {}) do
+        local pid = stateId(ps)
+        if pid and not looks[pid] then
+            local look = pickLook(pid)
+            if look then
+                looks[pid] = look
+                lookStats.assigned = lookStats.assigned + 1
+                Log.info("bodies: player %d will look like a %s to everyone", pid,
+                         (look.m or ""):match("([^/%.]+)$") or "town NPC")
+            end
+        end
+    end
+end
+
+local function sendLooks(now)
+    if now < nextLookSend or not Chan.isReady() then return end
+    nextLookSend = now + LOOK_SEND_EVERY
+    local here = {}
+    for _, ps in ipairs(UE.findAll("PlayerState") or {}) do
+        local pid = stateId(ps)
+        if pid then here[pid] = true end
+    end
+    for pid, look in pairs(looks) do
+        if here[pid] then
+            local payload = { p = tostring(pid) }
+            for k, v in pairs(look) do payload[k] = v end
+            if Chan.broadcast("plook", payload) > 0 then lookStats.sent = lookStats.sent + 1 end
+        end
+    end
+end
+
+local function onLook(fields)
+    if not UE.IsClient() then return end
+    local pid = tonumber(fields.p)
+    if not pid then return end
+    local look = {}
+    for k, v in pairs(fields) do if k ~= "p" then look[k] = v end end
+    if dressedLook(look) then
+        looks[pid] = look
+        lookStats.received = lookStats.received + 1
+    end
+end
+
+local function signature(look)
+    local parts = { look.m or "" }
+    for i = 0, 7 do parts[#parts + 1] = look["s" .. i] or "" end
+    for _, k in ipairs({ "h", "hm", "f", "fm", "a", "am", "e", "eb" }) do parts[#parts + 1] = look[k] or "" end
+    return table.concat(parts, "\n")
+end
+
+--- This pawn's own hair / beard / glasses component, found again by path
+--- (never kept as a pointer), made when `create` and it has none.
+local function headPiece(pawn, key, mesh, slot, create)
+    local book = headComps[key]
+    if not book then book = {} headComps[key] = book end
+    local c = book[slot] and UE.findObject(book[slot]) or nil
+    if UE.valid(c) then return c end
+    if not create then return nil end
+    local cls = StaticFindObject("/Script/Engine.StaticMeshComponent")
+    if not UE.valid(cls) then return nil end
+    pcall(function() c = pawn:AddComponentByClass(cls, true, IDENTITY, false) end)
+    if not UE.valid(c) then return nil end
+    pcall(function() c:K2_AttachToComponent(mesh, FName(HEAD_SOCKET), 2, 0, 0, true) end)
+    -- Hair that blocks: the host's traces for a guest's pickups would hit it.
+    pcall(function() c:SetCollisionEnabled(0) end)
+    book[slot] = UE.pathOf(c)
+    return c
+end
+
+local function wearHead(pawn, key, mesh, look)
+    for slot in pairs(NpcLook.HEAD) do
+        local path = look[slot]
+        local m = (type(path) == "string" and path ~= "") and NpcLook.asset(path) or nil
+        if m then
+            local c = headPiece(pawn, key, mesh, slot, true)
+            if c then
+                pcall(function() c:SetStaticMesh(m) end)
+                pcall(function() c:SetVisibility(true, false) end)
+                local i = 0
+                for spec in (look[slot .. "m"] or ""):gmatch("[^%^]+") do
+                    NpcLook.dressSlot(c, i, spec)
+                    i = i + 1
+                end
+            end
+        else
+            local c = headPiece(pawn, key, mesh, slot, false)
+            if c then pcall(function() c:SetVisibility(false, false) end) end
+        end
+    end
+end
+
+--- Put this pawn's look on it, once per look.
+local function wearLook(pawn, key)
+    local pid = pawnId(pawn)
+    local look = (pid and looks[pid]) or localLook[key]
+    if not look then return end
+    local sig = signature(look)
+    if wearing[key] == sig then return end
+    local mesh = UE.TryGet(pawn, "Mesh")
+    if not UE.alive(mesh) then return end
+    local body = NpcLook.asset(look.m)
+    if body and not UE.sameObject(readMeshAsset(mesh), body) then
+        if not pcall(function() mesh:SetSkinnedAssetAndUpdate(body, true) end) then return end
+    end
+    NpcLook.dressBody(mesh, look)
+    NpcLook.face(mesh, 0)
+    wearHead(pawn, key, mesh, look)
+    wearing[key] = sig
+    lookStats.worn = lookStats.worn + 1
+    Log.info("bodies: %s dressed in %s", UE.ClassNameOf(pawn),
+             (pid and looks[pid]) and ("the look the host gave player " .. pid)
+             or "the look of the NPC its body came from")
+end
+
+--------------------------------------------------------------------------
+-- What their body does
+--------------------------------------------------------------------------
+--[[
+    MEASURED on the host (15 Oct 2026): a guest's body running the town's
+    animation blueprint showed Speed 0 and Scale Character Play Rate 0 while
+    the guest walked - a passer-by beside it, 165 and 1.14. AnimBP_Base_C's
+    update (@4578) casts its pawn to AI_Base_Character_C and stops when that
+    fails, which on a player it always does: nothing past the cast ever sets
+    Speed (its idle/walk transitions are Speed > 2 / Speed < 1) or the walk's
+    play rate (an NPC's Max Speed Walk Scale / Character Scale). So the body
+    stood idle while its player walked, or walked frozen at rate 0.
+
+    The blueprint's own variables, then, written here every tick: the pawn's
+    speed, a play rate that matches its legs to it, and whether it is carrying
+    something (its hand socket has a child), which the blueprint blends into
+    the carrying pose (@2365). Fed this way by hand, the body walked.
+]]
+-- The town's walk cycle plays at rate 1.0 for about this ground speed, cm/s:
+-- a passer-by measured 165 cm/s at Scale Character Play Rate 1.143.
+local WALK_CYCLE_SPEED = 144.0
+
+local function carrying(pawn)
+    local socket = UE.TryGet(pawn, "AttachObject Socket")
+    local n = 0
+    if UE.valid(socket) then pcall(function() n = socket:GetNumChildrenComponents() end) end
+    return (tonumber(n) or 0) > 0
+end
+
+--[[
+    What they carry, in their hands. A held item hangs on the pawn's
+    "AttachObject Socket", which sits under the first-person camera rig (its
+    parent is "Lag offset", -80/0/-20 from it): right for the player holding
+    it, and in mid-air beside the head on everybody else's screen (measured:
+    a guest's tape at 2413,20,140, the guest at 2444,41). The socket itself does
+    not replicate - only the item's attachment to it does - so every machine
+    where this player is somebody else puts the socket on the body's own hand
+    (the skeleton's hand_rSocket; the stack's socket on hand_lSocket), and the
+    item goes with it. On the host a guest's pickup also plays the socket's
+    first-person "bring up" timeline (Player_Character @19159), which writes
+    its relative location - relative to the hand, now - so that is put back
+    every tick.
+]]
+local HAND_SOCKETS = { { "AttachObject Socket", "hand_rSocket" },
+                       { "AttachObject Inventory Socket", "hand_lSocket" } }
+local handsOn = {}      -- pawn full name -> true once its sockets are on its hands
+
+local function holdInHands(pawn, key)
+    if handsOn[key] then return end
+    local mesh = UE.TryGet(pawn, "Mesh")
+    if not UE.alive(mesh) then return end
+    local moved = 0
+    for _, pair in ipairs(HAND_SOCKETS) do
+        local socket = UE.TryGet(pawn, pair[1])
+        if UE.valid(socket) and pcall(function()
+                socket:K2_AttachToComponent(mesh, FName(pair[2]), 2, 2, 1, false)
+            end) then
+            moved = moved + 1
+        end
+    end
+    handsOn[key] = true
+    Log.debug("bodies: %d carrying socket(s) moved onto %s's hands", moved, UE.ClassNameOf(pawn))
+end
+
+local function keepInHands(pawn)
+    for _, pair in ipairs(HAND_SOCKETS) do
+        local socket = UE.TryGet(pawn, pair[1])
+        local rel = UE.valid(socket) and readVec(socket, "RelativeLocation") or nil
+        if rel and (math.abs(rel.X) + math.abs(rel.Y) + math.abs(rel.Z)) > 1.0 then
+            setRelLocation(socket, { X = 0.0, Y = 0.0, Z = 0.0 })
+        end
+    end
+end
+
+local function feedAnimation(pawn)
+    local mesh = UE.TryGet(pawn, "Mesh")
+    if not UE.alive(mesh) then return end
+    local inst = nil
+    pcall(function() inst = mesh:GetAnimInstance() end)
+    if not UE.valid(inst) or UE.ClassNameOf(inst) ~= "AnimBP_Base_C" then return end
+    local speed = speedOf(pawn) or 0.0
+    UE.TrySet(inst, "Speed", speed)
+    UE.TrySet(inst, "Scale Character Play Rate",
+              speed > 2 and math.max(0.5, math.min(2.5, speed / WALK_CYCLE_SPEED)) or 1.0)
+    UE.TrySet(inst, "Is Holding Something", carrying(pawn))
+end
+
+--------------------------------------------------------------------------
 -- Tick
 --------------------------------------------------------------------------
 
@@ -922,13 +1221,24 @@ function Bodies.tick(now)
     -- Compared against false so a config.lua predating this option still gets
     -- the feature, the same way AutoSpawnGuestPawns does.
     if not cfg or cfg.BorrowNpcBodies == false then return end
-    if UE.IsStandalone() then return end
+    if UE.IsStandalone() then noneSince = nil return end
 
     local mine  = UE.GetPawn()
     -- No pawn of our own for the moment (a guest's being replaced, say):
     -- nothing tells "ours" from "theirs" then, and a body put on our own
     -- would be inside our camera. Next tick.
     if not UE.alive(mine) then return end
+
+    -- The animation blueprint's own inputs, and the carried things in the
+    -- hands, every tick (feedAnimation, keepInHands).
+    for _, p in ipairs(UE.findAll("Player_Character_C") or {}) do
+        if UE.alive(p) and not UE.sameObject(p, mine) then
+            pcall(feedAnimation, p)
+            local k = nil
+            pcall(function() k = p:GetFullName() end)
+            if k and handsOn[k] then pcall(keepInHands, p) end
+        end
+    end
 
     -- Animation runs every tick. Dressing is the expensive part and stays on
     -- the poll below; matching a walk cycle to a moving player cannot be.
@@ -946,6 +1256,12 @@ function Bodies.tick(now)
 
     if (now - lastPoll) < POLL_INTERVAL then return end
     lastPoll = now
+
+    -- The host decides what everybody looks like, and tells everyone.
+    if UE.IsServer() and cfg.PlayerLooks ~= false then
+        Safety.guard(RISKY_OP, assignLooks)
+        sendLooks(now)
+    end
 
     local pawns = UE.findAll("Player_Character_C")
     if not pawns then return end
@@ -971,6 +1287,15 @@ function Bodies.tick(now)
                 -- after dress() has returned and verified it, so this has to
                 -- be a standing check rather than part of dressing.
                 Safety.guard(RISKY_OP, holdPlacement, p, key)
+                -- Its look goes on a body that has been dressed (a poll after):
+                -- a mesh put there first would make dress() leave it alone,
+                -- animation and placement included.
+                if dressed[key] ~= nil and cfg.PlayerLooks ~= false then
+                    Safety.guard(RISKY_OP, wearLook, p, key)
+                end
+                if dressed[key] ~= nil and cfg.CarryInHands ~= false then
+                    Safety.guard(RISKY_OP, holdInHands, p, key)
+                end
 
                 if (dressed[key] or -1) < 3 then
                     todo[#todo + 1] = { key = key, pawn = p, have = dressed[key] }
@@ -982,7 +1307,7 @@ function Bodies.tick(now)
     -- Forget every pawn that is not here any more. On a guest that is the
     -- host's pawn each time the guest leaves network range: it comes back as
     -- a new actor under a new name, and is dressed again as one.
-    for _, book in ipairs({ dressed, placed, placedRot, anim }) do
+    for _, book in ipairs({ dressed, placed, placedRot, anim, wearing, localLook, headComps, handsOn }) do
         for key in pairs(book) do
             if not present[key] then book[key] = nil end
         end
@@ -991,8 +1316,18 @@ function Bodies.tick(now)
     -- Nothing of anyone else's is here. That is the OTHER bug with this
     -- symptom, and it is worth saying so exactly once rather than sitting
     -- silently doing nothing that could ever help.
+    -- MEASURED (lag, rejoin and 3-player tests, 15 Oct 2026): it fired on every
+    -- join - the others' pawns land a few seconds after the level - and on the
+    -- host each time a guest left. Neither is a problem, and the text sent
+    -- people looking for one. Now only when someone else is in the session
+    -- (their PlayerState is here) and has had no pawn for NOBODY_GRACE seconds.
     if others == 0 then
-        if not reported then
+        if #(UE.findAll("PlayerState") or {}) <= 1 then
+            noneSince = nil                -- alone: nobody's pawn to wait for
+        else
+            noneSince = noneSince or now
+        end
+        if not reported and noneSince and (now - noneSince) >= NOBODY_GRACE then
             reported = true
             Log.warn("no other player's pawn exists on this machine, so there is " ..
                      "nothing to give a body to - that is a replication problem, " ..
@@ -1000,7 +1335,7 @@ function Bodies.tick(now)
         end
         return
     end
-    reported = false
+    reported, noneSince = false, nil
 
     if #todo == 0 then return end
 
@@ -1038,6 +1373,11 @@ function Bodies.tick(now)
                 return
             end
             dressed[entry.key] = rank
+            -- A new body: its look goes on again, and until the host's
+            -- arrives it is the look of the NPC this one came from.
+            wearing[entry.key] = nil
+            local fallback = UE.alive(donor.npc) and NpcLook.read(donor.npc) or nil
+            localLook[entry.key] = dressedLook(fallback) and fallback or nil
         end
     end
 end
@@ -1121,6 +1461,8 @@ function Bodies.reportLines()
     end
 
     add("")
+    add("%s", Bodies.lookReport())
+    add("")
     local donor = findDonor()
     if donor then
         local ok, full = pcall(function() return donor.asset:GetFullName() end)
@@ -1146,12 +1488,27 @@ end
 --- Forget what has been done and dress everyone again. Wired to rt.bodies retry.
 function Bodies.retry()
     dressed, placed, placedRot, anim = {}, {}, {}, {}
+    wearing, localLook, handsOn = {}, {}, {}
     reported, noDonorWarned = false, false
     lastPoll = 0
 end
 
+--- A session ended: the looks were the host's choice for that session.
+function Bodies.reset()
+    Bodies.retry()
+    looks, usedDonor, headComps, nextLookSend = {}, {}, {}, 0
+end
+
 function Bodies.init(config)
     cfg = config
+    Chan.on("plook", function(f) Log.guard("a player's look", onLook, f) end)
+end
+
+function Bodies.lookReport()
+    local n = 0
+    for _ in pairs(looks) do n = n + 1 end
+    return ("Player looks: %d known, %d assigned here, %d sent, %d received, %d bodies dressed in one")
+        :format(n, lookStats.assigned, lookStats.sent, lookStats.received, lookStats.worn)
 end
 
 --- Tests only: the per-pawn bookkeeping, keyed by pawn name.

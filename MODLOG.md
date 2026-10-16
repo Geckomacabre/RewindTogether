@@ -515,3 +515,151 @@ starts itself, sync/interaction verified, docs for strangers.
   a real click on the button -> host log "(0, 0, 92) -> (2495, 41, 132)", beside the host. Host's
   own menu has the button too (above the last-save line); clicking it while paused put the host at
   the register's exit (1718, -1486) and unpaused.
+
+### Network conditions, three players, a host crash, and the office computer for guests (2026-10-15)
+
+- Tools: dev/netsim.py (UDP proxy, lag/jitter/loss, in order unless --reorder), dev/worldcheck.py
+  (host vs each guest: every tape/box/shelf/decoration/poster/standee paired by position, money,
+  level, XP, day, clock, season, weather; --wait), coop_test.py `up <address>` / `guest-only
+  <address>` (a third copy takes slot C). Rented-out tapes are hidden at (0,0,0) on the host and
+  never replicate (83 of 479): worldcheck skips hidden actors.
+- 150 ms / 25 ms jitter / 2%: everything matched after the join; a guest pickup and a 7.4 m walk
+  (AddMovementInput from a ReceiveTick hook, real client moves) converged on both. Rejoin and late
+  join (host changed money and clock while the guest was away): store complete 17 s direct, 19 s
+  through 300 ms / +-80 ms / 5%, 18 s again on the same proxy. Three players through the bad link:
+  both guests match. With per-packet jitter that reorders (--reorder) it took ~3 minutes: Unreal
+  drops a packet older than the newest. netsim's first version went deaf after a guest left
+  (Windows proactor loop stops reading a UDP socket after one ICMP port-unreachable); it now runs
+  on the selector loop. Guest bandwidth: 100,000 B/s, server tick 60.
+- Found and fixed: a guest who left holding a tape left it floating at hand height (now dropped
+  the game's way: Toggle Currently in Hand false + Toggle Simulate Physic true). Dropped and thrown
+  things then lay on the host's floor and hung in the air on guests: physics runs on the Mesh,
+  which leaves its parent; the replicated root stays (read off a dropped tape: simulating, attach
+  parent none). thrown.lua keeps the root on the mesh; resting ones checked every 5 s (six resting
+  tapes looked up 5x/s were 27 of 50 path lookups a second). "No other player's pawn ... a
+  replication problem" fired on every join and leave: now only after 20 s with a PlayerState and
+  no pawn.
+- HOST CRASH, twice, three players, idle, 6.5 and 3.5 minutes in, both after a guest had left:
+  EXCEPTION_ACCESS_VIOLATION in UE4SS, the same native stack, trace phases NpcSync.tickHost and
+  World.tickHost. Offsets against UE4SS.dll's export table: UObject::GetOutermost <-
+  UObjectGlobals::FindObject <- ForEachUObject - a walk of every object. UE4SS's StaticFindObject
+  is that walk (measured 2-29 ms a call; only native classes are fast) and both phases call it on
+  timers (speech hooks every 5 s, the sky's material collection). ue.lua now replaces the global
+  with UE.staticFind (soft-path route, 0.1 ms, same answers on ten kinds of path). Also: class
+  learning walks for config names this game lacks (AI_Character, Staff, Customer, Snack_Pack_4x,
+  ConsoleRental_Console-Base: 8+ a minute, forever) give up after 6 tries per world; component
+  classes (Shelve_Container_C) walked at most once a minute. Fine-grained dev trace added
+  (UE.trace -> devbridge "phase > step"). After the fix: 43 minutes with three players through
+  300 ms / 5% loss, 21 guest departures and rejoins (every 2 min, alternating), no crash and no
+  error in the log (before it: 6.5 and 3.5 minutes). StaticFindObject now ~2 calls/s, the native
+  ones cached; walks 2 a minute (component classes). Left over, older: ~13 per-tick class lookups
+  a second through the soft-path route, each leaking ~0.6 KB in UE4SS.
+- Cleanup: 12 saves byte-identical to the pre-test backup, GameUserSettings.ini identical to
+  .pre-claude, bridge/trace files removed, the released 1.7.3 scripts put back in the game folder
+  (1.7.4 is built in dist/ but not committed or published).
+- Office computer for guests (computer.lua, guest action 13). Research note:
+  side-session-notes/.../office-computer-pages.md. Host payload: Market_C arrays/TMaps read in
+  place, price via Movie_C "Generate Value in Pennies of Movie" (1800 for Skull on Mars), old flag,
+  new-release days left, net worth (screen's "Return Net Worth of Store"), date ("Day and Season"
+  out of Date_C "Format Date in RR"). Guest: cards made with WidgetBlueprintLibrary Create, fields
+  written in place, AddChild runs Construct (box art, name, tags, rating drawn by the game);
+  price/Old overwritten; bundle title from the string table with the count; new-release body run
+  from @2022; its standee picture is a class neither copy can load from Lua - hidden. Orders: the
+  host calls "Market - Click on Button Product Event" / "...Bundle Movie Event" / "New Release
+  Movie - Product Click on Button Buy Even" with a throwaway card carrying the price. Measured:
+  movie -975 cents, market 19 -> 18, tape 479 -> 480; new release -2500 and 1 tape; bundle -10000
+  and 10 tapes, 2 -> 1 bundles; a repeat after the window refused. Live with the real mouse on the
+  guest: Market tab, scroll, BUY on The Rocketman Tragedy -> host money -975, tape at the delivery
+  spot on all three screens, guest market refreshed. Bugs found on the way: one card registry for
+  both pages lost the market's cards when the new releases arrived a tick later (Buy did nothing);
+  pages redrawn every 30 s (scroll reset) - now only when their content changed; a guest's clicks
+  on a machine's screen were also forwarded to the host as "primary" - not while at a machine.
+- UE4SS facts measured: all out-parameters land in the first table passed; nested struct wrappers
+  write in place; FDateTime Ticks unreadable; TSoftObjectPtr -> string via
+  Conv_SoftObjectReferenceToString.
+
+### Other players' bodies: one look per player, a walk that walks, things in hands (2026-10-15)
+
+- Reported by the user: "a lot we could be doing better, especially with player pawn animations
+  and their look; some have broken textured shirts". Measured on the host, a guest's body next to a
+  passer-by: SK_CHA_M_01 in the mesh's default material instances (MI_CHA_Cloth_Tshirt_01 ...),
+  bald, staring; the NPC's slots are dynamic materials of the same parents with a texture and tint,
+  hair/beard/glasses on HeadTop_EndSocket. The body's AnimBP_Base_C: Speed 0, Scale Character Play
+  Rate 0 while walking (the NPC beside it: 165, 1.143). Cause: its update casts the pawn to
+  AI_Base_Character_C (@4578) and stops on a player. Each machine also borrowed from whatever NPC it
+  found first, so every screen saw a different person.
+- Fix (bodies.lua, npcsync.lua exports Npc.look = read/dressBody/dressSlot/asset/face/HEAD):
+  host picks a town NPC look per PlayerId (passers-by and customers first, a different NPC each,
+  only a dressed one: its top a dynamic material with a texture), sends "plook" every 10 s; every
+  machine swaps the body by SetSkinnedAssetAndUpdate (also now the first choice in writeMeshAsset),
+  dresses the slots/eyes, sets a neutral face, and adds hair/beard/glasses with AddComponentByClass
+  (StaticMeshComponent, NoCollision) attached like the NPC's own "Attach Child to Skeletal" (@33527).
+  The AnimBP gets Speed, play rate (speed/144) and Is Holding Something (the hand socket has a child)
+  every tick. The held item's socket ("AttachObject Socket", parent "Lag offset") goes on the body's
+  hand_rSocket on machines where the player is remote (the stack's on hand_lSocket); reset to the
+  hand every tick (the host plays a guest's first-person "bring up" timeline on it, @19159).
+  Config.PlayerLooks, Config.CarryInHands (missing = on).
+- Measured live, three copies: 3 looks assigned, each player the same on the other two screens
+  (e.g. guest B a grey-haired man in a striped sweater and jeans on the host and on guest C; the
+  host a moustached man in an orange T-shirt on both guests); B's body Speed 300 / rate 2.08 while
+  walking, 0 / 1.0 standing, a stride in the screenshots; B's tape in its right hand on C's screen;
+  a thrown tape landed in the same spot on all three (worldcheck: 396/396). 0 errors. Smoke 410 PASS
+  (7 new). Cleanup: saves byte-identical, GameUserSettings.ini unchanged, bridge files removed, the
+  released 1.7.3 scripts back in the game folder.
+
+### Memory: per-tick class lookups (2026-10-15)
+
+- Measured per call (host only, 200,000 calls each, private bytes after two Lua collections):
+  control IsValid(obj) 0-1 bytes; the path lookup UE.findObject made (MakeSoftObjectPath +
+  Conv_SoftObjPathToSoftObjRef + Conv_SoftObjectReferenceToObject) 257; Conv_SoftObjectReference-
+  ToObject on a kept reference 86; K2_GetActorLocation 279 (struct returns and params leak in
+  UE4SS 3.0.1); number/object property reads ~0. Rate in a host+guest session: ~31 path lookups/s
+  on the host, ~34 on the guest (findAll/findFirst resolve each Blueprint class once per tick;
+  sendDrawer's CheckOut_C was 9/s alone).
+- Fix: ue.lua keeps one TSoftObjectPtr per path (softRefOf; bounded at 512) and resolves only
+  that - a soft reference is a value, its weak pointer checked against the object array's serial
+  number, safe across frames where an object pointer is not. Measured: kept references stay
+  independent (A, B, then 50 more: A still A, in a later frame). UE.staticFind uses the same.
+  sendDrawer now runs 5 times a second. rt.status shows the kept references. Saves ~(257-86) x
+  30/s = ~20 MB/hour per copy. Session windows (4 min, Private Bytes slope) were noise: old
+  lookup +193/+313, then -4/+213 MB/h; new -5/-86, then +83/+130 - the game itself swings that much.
+- Test mistake, user-visible: to measure the game without the mod I paused the mod's tick on both
+  copies (wrapping Log.guard("tick")); the guest's NPCs stopped being restyled and the user saw
+  "all the NPCs are broken again, no hair or animations". Unpaused within a minute; after it, 9/9
+  guest NPCs with hair and a walk rate. Don't pause the tick while anyone is watching.
+- Live with the new ue.lua: worldcheck matches, NPCs 9/9 paired, player looks sent and worn, 0
+  errors. Smoke 412 PASS (2 new). Cleanup: saves byte-identical, GameUserSettings.ini unchanged,
+  bridge files removed, released 1.7.3 scripts back in the game folder.
+
+### Office computer: Black Market search and Data page for guests (2026-10-15)
+
+- Black Market = the Search page (switcher value 4): type a SKU, buy that movie at a mark-up. On a
+  guest its Committed event (@10716) runs Create Film Data (works: data tables, deterministic per
+  SKU) and stops at Unlockable_Function "Return Research" (GameMode) -> "no movie found". Guest
+  hooks the event, clears the box and asks (action 13, kind 5, SKU, sequence number). Host:
+  WidgetBlueprintLibrary Create of a second UI_ScreenComputer_Widget (never shown, so the host's
+  own Search page keeps what the host typed), its Committed(SKU), Search_WrapBox child 0 is the
+  UI_Computer_Product-SKU card or NoFoundProduct; price from the card's own Generate Value in
+  Pennies (its Construct never ran); "csku" back with the product line, price, genre-researched,
+  Old. Guest makes an SKU card, writes the fields, sets the bool, overwrites the price. Buy = kind
+  6: the host searches again and calls its real screen's "Search - Clicked on a Product Event"
+  with that card (whole Product incl. tags; class SKU_C, so achievement 17 can unlock on the
+  host - the user said yes to that, "any buy in the store").
+- Data page: Generate Data Movie Genre Button and Generate Data Page of Genre stop at the GameMode
+  on a guest. "Generate A Data"(ID, genre) does not use it. Host sends "cdata": genres researched
+  (+16 Adult), copies owned, times rented. Guest makes UI_Computer_Data-ButtonSwitcher buttons
+  (Genre set before AddChild), hooks their btn click, runs the screen's own "Button Movie Genre
+  Data - Click Event" (lights the button, clears the lists), then 10 rows a tick: owned (in the
+  count map) into VerticalBox_Data-Owned with copies/rented text, the rest into Non-Owned + Set
+  Disable (as @308/@856).
+- Standee picture: the earlier "class neither copy can load" was a bad path, not a missing asset.
+  Read through UE4SS the host's Standeereference is ".../Standees_Collection.Standees_Collection_
+  19759_C"; the market builds ".../Standees_Collection_19759.Standees_Collection_19759_C" (Market_C
+  "Return Standee based on SKU") and that package is in the pak - the FName number of the package
+  name was dropped on the way into Lua. Thumbnails pair 1:1 with movie standees
+  (T_Standees_Collection_<SKU>, 27/27); video-game banners do not (1 thumbnail for 9), so a game's
+  banner picture stays hidden. Guest loads the thumbnail by path string (UE4SS LoadAsset, then
+  UE.load) and sets Image_Standee's brush.
+- Smoke 417 PASS (6 new: search answered once, not found, search buy once at the card's price,
+  Data payload, standee path). NOT yet run in a live game: released as 1.7.4 for the user's own
+  live test (the user's call).

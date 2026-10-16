@@ -178,6 +178,16 @@ Config.PlaceGuestsNextToHost = true
 -- the register. rt.unstuck does the same from the console. Missing = on.
 Config.PauseMenuBackToStore = true
 
+-- Thrown things land in the same place on every screen. The game's physics
+-- runs on the host only and moves a thrown tape's mesh but not the tape, so a
+-- guest saw it hang in mid-air where it was let go. Missing = on.
+Config.SyncThrownThings = true
+
+-- The office computer works for guests: the host's market, new releases and
+-- desktop on their screen, and what they order is bought with the store's
+-- money on the host. Missing = on.
+Config.GuestOfficeComputer = true
+
 -- If a guest ends up far below the host, pull them back up.
 --
 -- A guest who is merely spawned badly is fixed once. A guest who keeps ending
@@ -205,6 +215,16 @@ Config.RescueFallingGuests = true
 -- Turn it off if you would rather see nothing than see your friend as a shop
 -- assistant. rt.bodies shows what it found.
 Config.BorrowNpcBodies = true
+
+-- Each player's body wears one town character's whole look - clothes, colours,
+-- hair, face - picked by the host and the same on every screen. Off: the
+-- borrowed body keeps the look of whichever local NPC it came from. Missing = on.
+Config.PlayerLooks = true
+
+-- What another player carries is shown in their body's hands (the right hand,
+-- a stack in the left) instead of floating beside their head. Only how YOU see
+-- them; their own view is untouched. Missing = on.
+Config.CarryInHands = true
 
 -- EXPERIMENTAL, OFF. Build a whole GameMode on the guest, automatically, once,
 -- a few seconds after they get a pawn.
@@ -253,6 +273,9 @@ Config.GuestLocalGameMode = false
 -- a sweep, which PROJECT.md warns about in as many words. In 1.6.0 it took the
 -- host's process down the instant a guest joined. It is capped and
 -- liveness-checked now and it is still the riskiest thing the mod can do.
+--
+-- Since 1.7.4 the borrowed blueprint is fed the player's speed every tick and
+-- walks properly without this; it is only kept for comparison.
 --
 -- Turn it on only if the circling idle bothers you more than the risk of one
 -- bad launch. A crash retires it by itself and the next launch explains why.

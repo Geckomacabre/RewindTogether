@@ -54,6 +54,8 @@ local DayEnd      = require("dayend")
 local TalkSync    = require("talksync")
 local MainMenu    = require("mainmenu")
 local PauseMenu   = require("pausemenu")
+local Thrown      = require("thrown")
+local Computer    = require("computer")
 local Commands    = require("commands")
 local DevBridge   = require("devbridge")
 local Launch      = require("launchfile")
@@ -402,6 +404,9 @@ local function tick()
             DayEnd.reset()
             TalkSync.reset()
             PauseMenu.reset()
+            Thrown.reset()
+            Computer.reset()
+            Bodies.reset()
         end
     end
 
@@ -464,6 +469,8 @@ local function tick()
     phase("NpcSync.tickGuest") NpcSync.tickGuest(now)
     -- What the guest's own game does that the host must hear about (the till).
     phase("GuestInput.tickGuest") GuestInput.tickGuest()
+    -- The office computer's pages, from the host (computer.lua).
+    phase("Computer.tickGuest") Computer.tickGuest(now)
     -- A conversation the host stopped saying closes (talksync.lua).
     phase("TalkSync.tickGuest") TalkSync.tickGuest()
 
@@ -474,6 +481,8 @@ local function tick()
         phase("World.tickHost") World.tickHost(now)
         phase("SkinSync.tickHost") SkinSync.tickHost(now)
         phase("NpcSync.tickHost") NpcSync.tickHost(now)
+        -- Thrown things, where they land (thrown.lua).
+        phase("Thrown.tick") Thrown.tick(now)
         phase("GuestInput.tickHost") GuestInput.tickHost()
         -- Trust in a guest's position, back after the host moved them (replication.lua).
         phase("Replication.restoreTrust") Replication.restoreTrust()
@@ -578,6 +587,8 @@ local function start()
     Chat.init()
     MainMenu.init(Config)
     PauseMenu.init(Config)
+    Thrown.init(Config)
+    Computer.init(Config)
     Commands.init(Config)
     require("input").start()
     DevBridge.init(Commands)

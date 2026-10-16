@@ -85,6 +85,9 @@ local ACTIONS = {
     -- Not a key: "Back to the store" in the pause menu (pausemenu.lua). The
     -- host puts the guest beside the host, as rt.bring does.
     [12] = { label = "back to the store", special = "backToStore" },
+    -- Not a key: the office computer (computer.lua) - "send me its pages", or
+    -- an order. The three location floats carry what and which.
+    [13] = { label = "the office computer", special = "computer" },
 }
 
 local cfg = nil
@@ -182,6 +185,12 @@ local function onPress(code)
     if cfg and cfg.ForwardGuestInteractions == false then return end
     -- A conversation is up (talksync.lua): the mouse is answering it.
     if TalkSync.guestTalking() then return end
+    -- Sitting at a machine (the computer, the catalogue...): the mouse is
+    -- working its screen, here. MEASURED: each click on the office computer's
+    -- tabs also went to the host as "primary", where the guest's character is
+    -- not at the machine and would have used whatever the camera faced.
+    -- (The accessor: machineIn is declared further down this file.)
+    if GuestInput.inMachine() then return end
     local pc = UE.GetPlayerController()
     if not UE.alive(pc) or not UE.valid(UE.GetPawn()) then return end
     local cm = UE.TryGet(pc, "PlayerCameraManager")
@@ -265,6 +274,55 @@ local function sendTool(pc, pawn, now)
     end
 end
 
+--[[
+    WHAT A GUEST WAS CARRYING WHEN IT LEFT
+
+    MEASURED (lag test, 15 Oct 2026): a guest left holding a tape, and the tape
+    stayed where the guest's hand had been - in mid-air at chest height in the
+    street. The pawn is destroyed with the tape still attached to it, and
+    destroying a parent only detaches its children. The stack works the same
+    way: "Objects Inventory" items hang on the pawn's inventory socket
+    (Player_Character.txt @18168).
+
+    So the host notes, about once a second, what each guest pawn carries; when
+    a pawn it noted is gone, whatever it carried that is still about and still
+    attached to nothing gets what the game's Throw does without a player
+    (PickupActor.txt EVENT Throw @1363): out of the hand, physics on. It falls
+    to the floor where the guest stood. Boxes have the same Toggle Simulate
+    Physic (MovingBox.txt).
+]]
+local HELD_EVERY = 1.0
+local heldNext = 0
+local held = {}              -- guest pawn full name -> { item path, ... }
+
+local function carriedBy(pawn)
+    local out = {}
+    local function add(a)
+        if UE.alive(a) and UE.sameObject(a:GetAttachParentActor(), pawn) then
+            out[#out + 1] = UE.pathOf(a)
+        end
+    end
+    pcall(add, UE.TryGet(pawn, "Object Hold"))
+    local stack = UE.TryGet(pawn, "Objects Inventory")
+    if stack then
+        pcall(function() stack:ForEach(function(_, e) pcall(add, e:get()) end) end)
+    end
+    return out
+end
+
+local function dropCarried(items)
+    local n = 0
+    for _, path in ipairs(items) do
+        local item = UE.findObject(path)
+        -- Attached to something again (a shelf, someone's hand): not ours to drop.
+        if UE.alive(item) and not UE.valid(item:GetAttachParentActor()) then
+            pcall(function() item["Toggle Currently in Hand"](item, false) end)
+            if pcall(function() item["Toggle Simulate Physic"](item, true) end) then n = n + 1 end
+        end
+    end
+    return n
+end
+
 --- The host runs every guest pawn's Blueprint tick too, and that tick is a
 --- look-at trace that calls PlayerIsLookingAt on whatever the GUEST's camera
 --- points at - highlighting it, on the host's screen, and fighting the
@@ -275,12 +333,17 @@ function GuestInput.tickHost()
     if not UE.IsServer() then return end
     local now = os.clock()
     local tillUserHere = false
+    local noteHeld = now >= heldNext
+    local pawnsHere = {}
+    if noteHeld then heldNext = now + HELD_EVERY end
     for _, pc in ipairs(UE.GetAllPlayerControllers()) do
         if UE.alive(pc) and not UE.IsLocalController(pc) then
             if tillUser and pc:GetFullName() == tillUser then tillUserHere = true end
             local pawn = UE.TryGet(pc, "Pawn")
             if UE.alive(pawn) and UE.ClassNameOf(pawn) == "Player_Character_C" then
                 local key = pawn:GetFullName()
+                pawnsHere[key] = true
+                if noteHeld then held[key] = carriedBy(pawn) end
                 if not tickStopped[key] then
                     tickStopped[key] = true
                     pcall(function() pawn:SetActorTickEnabled(false) end)
@@ -293,6 +356,16 @@ function GuestInput.tickHost()
     end
     -- A guest who left the game while ringing up customers.
     if tillUser and not tillUserHere then freeTill() end
+    -- A guest who left the game carrying things.
+    for key, items in pairs(held) do
+        if not pawnsHere[key] then
+            held[key] = nil
+            if #items > 0 then
+                Log.info("a guest left carrying %d thing(s) - %d put down where they stood",
+                         #items, dropCarried(items))
+            end
+        end
+    end
     sendDrawer(now)
     sendBill(now)
 end
@@ -535,6 +608,7 @@ local function replay(pc, code, loc, rot)
     local pawn = UE.TryGet(pc, "Pawn")
     if not (UE.alive(pawn) and UE.ClassNameOf(pawn) == "Player_Character_C") then return end
     if action.special == "backToStore" then return backToStore(pc, pawn) end
+    if action.special == "computer" then return require("computer").onGuest(pc, loc, rot) end
     if cfg and cfg.ForwardGuestInteractions == false then return end
 
     if not Native.installRedirect() then
@@ -699,8 +773,14 @@ end
 local DRAWER_FIELDS = { a = "Actual Payback", r = "Money receive", p = "Money to Payback",
                         t = "Total of bill" }
 local drawerSent, drawerSentAt = nil, 0
+-- MEASURED (15 Oct 2026): run every tick, this was the host's most frequent
+-- class lookup - 9 a second - and each one costs a little memory in UE4SS
+-- (ue.lua, soft references). The drawer's state needs nothing like that rate.
+local DRAWER_EVERY, drawerNext = 0.2, 0
 
 function sendDrawer(now)
+    if now < drawerNext then return end
+    drawerNext = now + DRAWER_EVERY
     local co = UE.findFirst("CheckOut_C")
     if not UE.alive(co) then return end
     replicateTableMoney(co)
@@ -1084,6 +1164,8 @@ end
 
 --- Is this guest's own game using a machine (the computer, the catalogue...)?
 function GuestInput.inMachine() return machineIn ~= nil end
+--- The class of the machine this guest sits at ("ComputerScreen_C"), or nil.
+function GuestInput.machineClass() return machineIn and machineIn.name or nil end
 
 --- Guest: "Back to the store" (pausemenu.lua, rt.unstuck). The guest's own
 --- character gets its collision and walking back - a machine can leave them
@@ -1485,7 +1567,8 @@ function GuestInput.reset()
     lastLocalPress = -1e9
     tillUser, tillWasOn, exitFix = nil, false, nil
     machineIn, machineNext = nil, 0
-    drawerSent, drawerSentAt = nil, 0
+    held, heldNext = {}, 0
+    drawerSent, drawerSentAt, drawerNext = nil, 0, 0
     billNext, billQuick, billSent, billSentAt = 0, nil, nil, 0
     billShown = { lines = nil }
     picked = {}

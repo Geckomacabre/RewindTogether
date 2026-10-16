@@ -1,5 +1,5 @@
 =============================================================
-  REWIND TOGETHER  -  play Retro Rewind together   (v1.7.3)
+  REWIND TOGETHER  -  play Retro Rewind together   (v1.7.4)
   The simple guide. Read your part: HOST or GUEST.
 =============================================================
 
@@ -94,6 +94,14 @@ PLAYING TOGETHER
 
   Guests: switch tools with E, V and B. The mouse wheel does
   not switch tools for guests yet.
+
+  Anyone can order movies at the office computer (the Market,
+  New and Black Market pages) and look things up on the Data
+  page. It is the store's money, and the tapes arrive at the
+  delivery spot for everyone.
+
+  Every player looks like one of the town's characters, the
+  same on every screen. It is picked again each session.
 
   The HOST decides when the day ends. Guests see the day's
   summary too and carry on into the next day.

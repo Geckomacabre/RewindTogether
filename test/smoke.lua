@@ -457,12 +457,19 @@ check("switches to idle once, not once per tick", #played == 2,
       ("PlayAnimation called %d time(s) total"):format(#played))
 Config.DriveBodyAnimation = false
 
--- With nobody else present it must name the OTHER bug rather than sit quiet.
+-- With someone else in the session (their PlayerState is here) and no pawn
+-- of theirs for 20 s, it must name the OTHER bug rather than sit quiet.
+-- (Not at once: on every join the pawns arrive a few seconds after the level.)
 H.world.objects["Player_Character_C"] = { hostPawn }
+local savedStates = H.world.objects["PlayerState"]
+H.world.objects["PlayerState"] = { H.obj("PlayerState", {}), H.obj("PlayerState", {}) }
 Bodies.retry()
 local m2 = #H.log
 UE.beginFrame()
 Bodies.tick(clock + 200)
+UE.beginFrame()
+Bodies.tick(clock + 225)
+H.world.objects["PlayerState"] = savedStates
 local said = false
 for i = m2 + 1, #H.log do
     if H.log[i]:find("replication problem", 1, true) then said = true end
@@ -2653,6 +2660,7 @@ local hostCo = H.spawn("CheckOut_C", { ["Checkout Draw is open"] = true, ["User 
     ["Actual Payback"] = 0, ["Money receive"] = 2500, ["Money to Payback"] = 400, ["Total of bill"] = 2100 })
 UE._resetLookups()      -- an earlier tick looked for a CheckOut_C, found none, and backed off
 UE.beginFrame()
+later()                 -- the drawer is looked at five times a second, not every tick
 sentBefore = #sentStrings
 GuestInput2.tickHost()
 local tillMsg = nil
@@ -4060,6 +4068,453 @@ UE.findAll = realFindAll
 os.clock = realClock
 GuestInput2.reset()
 PauseMenu.reset()
+UE._resetLookups()
+UE.beginFrame()
+end)()
+
+;(function()
+print("\n-- a guest who leaves carrying things; the 'no other pawn' warning --")
+-- MEASURED (lag, rejoin and 3-player tests, 15 Oct 2026): a guest who left
+-- holding a tape left it in mid-air where its hand had been; and every join
+-- and every departure logged "no other player's pawn ... a replication
+-- problem", which neither was.
+local GuestInput3 = require("guestinput")
+local Bodies2 = require("bodies")
+UE.beginFrame()
+local hostPC = UE.GetPlayerController()
+local guestPC = nil
+for _, pc in ipairs(H.world.objects["PlayerController"] or {}) do
+    if pc ~= hostPC and pc.Player ~= nil and pc.IsValid(pc) then guestPC = pc break end
+end
+local realClock, realFindAll = os.clock, UE.findAll
+local fakeNow = realClock() + 900
+os.clock = function() return fakeNow end
+H.theWorld.NetDriver.ServerConnection = nil
+local savedGuestPawn = guestPC.Pawn
+local carrier = H.obj("Player_Character_C", {})
+local function item(parent)
+    return H.obj("videotape_C", { parent = parent, physics = false, inHand = true,
+        GetAttachParentActor = function(self) return self.parent end,
+        ["Toggle Currently in Hand"] = function(self, v) self.inHand = v end,
+        ["Toggle Simulate Physic"] = function(self, v) self.physics = v end })
+end
+local inHand, stacked, taken = item(carrier), item(carrier), item(carrier)
+carrier["Object Hold"] = inHand
+carrier["Objects Inventory"] = { ForEach = function(_, fn)
+    fn(1, { get = function() return stacked end })
+    fn(2, { get = function() return taken end })
+end }
+guestPC.Pawn = carrier
+UE.beginFrame() GuestInput3.tickHost()
+check("what a guest carries is left alone while it is here",
+      not inHand.physics and not stacked.physics and not taken.physics, "touched")
+-- It leaves: the pawn goes and its things hang where they were - except one
+-- the host has picked up in the meantime.
+guestPC.Pawn = nil
+carrier.__dead = true
+inHand.parent, stacked.parent, taken.parent = nil, nil, hostPC
+fakeNow = fakeNow + 2
+UE._resetLookups()
+UE.beginFrame() GuestInput3.tickHost()
+check("what a departed guest held and stacked is put down the way the game throws",
+      inHand.physics and inHand.inHand == false and stacked.physics,
+      ("in hand: physics %s, in hand %s; stacked: physics %s"):format(tostring(inHand.physics),
+       tostring(inHand.inHand), tostring(stacked.physics)))
+check("but not something somebody else has picked up since", taken.physics == false, "dropped from the host's hand")
+
+-- The warning: only for another player who stays without a pawn.
+local me = H.obj("Player_Character_C", {})
+local savedHostPawn = hostPC.Pawn
+hostPC.Pawn = me
+local states = { H.obj("PlayerState", {}) }
+UE.findAll = function(short)
+    if short == "Player_Character_C" then return { me } end
+    if short == "PlayerState" then return states end
+    return realFindAll(short)
+end
+local function warned(fromT, toT)
+    local m = #H.log
+    for t = fromT, toT, 2 do UE.beginFrame() Bodies2.tick(fakeNow + t) end
+    for i = m + 1, #H.log do
+        if H.log[i]:find("nothing to give a body to", 1, true) then return true end
+    end
+    return false
+end
+check("alone in the session: no warning about other players' pawns", not warned(0, 60), "warned")
+states[2] = H.obj("PlayerState", {})
+check("a player whose pawn is still on its way: no warning", not warned(70, 84), "warned within 15 s")
+check("a player with no pawn for 20 s: warned", warned(86, 100), "never warned")
+
+-- Thrown things: physics moves a tape's mesh, not the tape; the host keeps the
+-- tape (its root, which replicates) on the mesh.
+local Thrown = require("thrown")
+Thrown.init(require("config"))
+local TOGGLE = "/Game/VideoStore/core/blueprint/PickupActor.PickupActor_C:Toggle Simulate Physic"
+local savedToggle = H.staticObjects[TOGGLE]
+H.staticObjects[TOGGLE] = H.obj("Function", { __isActor = false, GetAddress = function() return 0x5100 end })
+local meshAt, moved = { X = 2481, Y = -2, Z = 2 }, nil
+local function loose()
+    return H.obj("StaticMeshComponent", { __isActor = false,
+        IsSimulatingPhysics = function() return true end, GetAttachParent = function() return nil end,
+        K2_GetComponentLocation = function() return meshAt end,
+        K2_GetComponentRotation = function() return { Pitch = 0, Yaw = 30, Roll = 90 } end })
+end
+local hiddenMoved = false
+local tape = H.obj("videotape_C", {
+    Mesh = loose(), RootComponent = H.obj("SceneComponent", { __isActor = false }),
+    K2_GetActorLocation = function() return { X = 2464, Y = 20, Z = 141 } end,
+    K2_SetActorLocationAndRotation = function(_, l, r) moved = { l = l, r = r } return true end })
+-- A rented-out tape: hidden at the world's origin, physics on (measured: 83).
+local rented = H.obj("videotape_C", { bHidden = true,
+    Mesh = loose(), RootComponent = H.obj("SceneComponent", { __isActor = false }),
+    K2_GetActorLocation = function() return { X = 0, Y = 0, Z = 0 } end,
+    K2_SetActorLocationAndRotation = function() hiddenMoved = true return true end })
+fakeNow = fakeNow + 200
+Thrown.tick(fakeNow)
+check("thrown things: Toggle Simulate Physic is hooked", H.hooks[TOGGLE] ~= nil, "not hooked")
+H.hooks[TOGGLE]({ get = function() return tape end }, { get = function() return true end })
+H.hooks[TOGGLE]({ get = function() return rented end }, { get = function() return true end })
+fakeNow = fakeNow + 1
+UE._resetLookups()
+UE.beginFrame()
+Thrown.tick(fakeNow)
+check("a falling tape's root is put on its mesh (where guests will see it)",
+      moved ~= nil and moved.l.X == 2481 and moved.l.Z == 2 and UE.field(moved.r, "Yaw") == 30,
+      moved and ("to (%s, %s, %s)"):format(tostring(moved.l.X), tostring(moved.l.Y), tostring(moved.l.Z)) or "not moved")
+H.hooks[TOGGLE]({ get = function() return tape end }, { get = function() return false end })
+moved = nil
+fakeNow = fakeNow + 1
+UE.beginFrame()
+Thrown.tick(fakeNow)
+check("and left alone once its physics is off again", moved == nil, "moved again")
+check("hidden ones (rented out) are not followed", hiddenMoved == false, "moved a hidden tape")
+H.staticObjects[TOGGLE] = savedToggle
+Thrown.reset()
+
+-- MEASURED: UE4SS's StaticFindObject walks every object in the engine (11 ms),
+-- and the host crashed inside that walk. Every module goes through ue.lua's.
+check("StaticFindObject is ue.lua's path lookup, not UE4SS's walk", StaticFindObject == UE.staticFind,
+      "still UE4SS's own")
+
+-- The office computer (computer.lua): a product's fields cross intact, and a
+-- guest's order goes through the host screen's own handler - once.
+local Computer = require("computer")
+Computer.init(require("config"))
+local BASE_ = "BaseStructure_2_FBB12C464AE570CAFD12ED8506160683"
+local BOX_ = "BoxData_25_B5A798DA4F509BDCCF4B189171C1DA10"
+local GAME_ = "GameData_34_BCBD34374FEBA7FBF4BCDAA8AD713241"
+local function product()
+    return { [BASE_] = { [BOX_] = {}, [GAME_] = {} } }
+end
+local function name(s) return { ToString = function() return s end } end
+local src = product()
+for _, f in ipairs(Computer._FIELDS) do
+    local holder = f[1] and src[BASE_][f[1]] or src[BASE_]
+    if f[3] == "name" or f[3] == "str" then holder[f[2]] = name(f[2]:sub(1, 6))
+    elseif f[3] == "b" then holder[f[2]] = true
+    else holder[f[2]] = #f[2] end
+end
+local line = Computer._readProduct(src)
+local dst = product()
+local realFName = _G.FName
+_G.FName = function(s) return name(s) end
+Computer._writeProduct(dst, line)
+_G.FName = realFName
+check("the computer: every field of a product crosses to the guest's card", (function()
+    for _, f in ipairs(Computer._FIELDS) do
+        local a = (f[1] and src[BASE_][f[1]] or src[BASE_])[f[2]]
+        local b = (f[1] and dst[BASE_][f[1]] or dst[BASE_])[f[2]]
+        if f[3] == "name" then if not (b and b.ToString and b:ToString() == a:ToString()) then return false end
+        elseif f[3] == "str" then if b ~= a:ToString() then return false end
+        elseif b ~= a then return false end
+    end
+    return true
+end)(), "a field came out different")
+
+-- A market of one movie, the host's screen, a store with $10.00.
+local SKU_ = "SKU_26_C5F25F4E49D05A4DEC2DEEAE5AEE5876"
+local RAR_ = "Rarityoftheprint_21_2CE41A2E4CFBE62E26CA5AA1867213B8"
+local movie = product()
+movie[BASE_][BOX_][SKU_] = 4121823
+movie[BASE_][RAR_] = 2
+local gm = H.obj("Core_Gamemode_C", { Money = 1000 })
+local handled = 0
+local screenW = H.obj("UI_ScreenComputer_Widget_C", { __isActor = false,
+    ["Market - Click on Button Product Event"] = function(_, card, e)
+        handled = handled + 1
+        if e == movie then gm.Money = gm.Money - card["Value in pennies"] end
+    end })
+local cs = H.spawn("ComputerScreen_C", { Widget = H.obj("WidgetComponent", { __isActor = false,
+    GetUserWidgetObject = function() return screenW end }) })
+local mk = H.spawn("Market_C", { ["Marketplace Movie of the Day"] = { movie, GetArrayNum = function() return 1 end } })
+-- The search runs on a screen of the host's own, never shown: this one finds
+-- one SKU and makes the game's SKU card for it.
+local SEARCH_ = "BndEvt__UI_ScreenComputer_Widget_UI_Computer_Command_SKU_K2Node_ComponentBoundEvent_1_Committed__DelegateSignature"
+local skuCard = H.obj("UI_Computer_Product-SKU_C", { __isActor = false, Product = movie,
+    ["Do the Player has Unlock the Genre?"] = true,
+    ["Generate Value in Pennies"] = function(_, p, out) if p == movie then out.Value = 1670 end end })
+local probes = 0
+local screenClass = H.obj("WidgetBlueprintGeneratedClass", { __isActor = false })
+local function probeScreen()
+    probes = probes + 1
+    local found = nil
+    return H.obj("UI_ScreenComputer_Widget_C", { __isActor = false,
+        [SEARCH_] = function(_, sku)
+            found = (sku == 4121823) and skuCard or H.obj("UI_Computer_NoFoundProduct_C", { __isActor = false })
+        end,
+        Search_WrapBox = { GetChildAt = function() return found end } })
+end
+local paths = {
+    ["/Game/VideoStore/core/blueprint/function/Movie.Default__Movie_C"] = H.obj("Movie_C", { __isActor = false,
+        ["Generate Value in Pennies of Movie"] = function(_, _, _, out) out["Value in Pennies"] = 975 end }),
+    ["/Script/UMG.Default__WidgetBlueprintLibrary"] = H.obj("WidgetBlueprintLibrary", { __isActor = false,
+        Create = function(_, _, cls)
+            if cls == screenClass then return probeScreen() end
+            return H.obj("UI_Computer_Product-Small_C", { __isActor = false })
+        end }),
+    ["/Game/VideoStore/asset/prop/Computer/UI/UI_Computer_Product-Small.UI_Computer_Product-Small_C"] =
+        H.obj("WidgetBlueprintGeneratedClass", { __isActor = false }),
+    ["/Game/VideoStore/asset/prop/Computer/UI_ScreenComputer_Widget.UI_ScreenComputer_Widget_C"] = screenClass,
+}
+local savedPaths = {}
+for p, o in pairs(paths) do savedPaths[p] = H.staticObjects[p] H.staticObjects[p] = o end
+local realGM = UE.GetGameMode
+UE.GetGameMode = function() return gm end
+local answers, found, sent = {}, {}, {}
+local savedSendTo = Chan.sendTo
+Chan.sendTo = function(_, t, f)
+    if t == "cres" then answers[#answers + 1] = f end
+    if t == "csku" then found[#found + 1] = f end
+    sent[t] = f
+    return true
+end
+UE._resetLookups()
+UE.beginFrame()
+Computer.onGuest(guestPC, { X = 1, Y = 4121823, Z = 2 }, { Pitch = 7, Yaw = 0, Roll = 0 })
+check("a guest's order is bought through the host screen's own handler, at the host's price",
+      handled == 1 and gm.Money == 25 and answers[1] and answers[1].ok == "1",
+      ("handled %d, money %s, answer %s"):format(handled, tostring(gm.Money), tostring(answers[1] and answers[1].ok)))
+Computer.onGuest(guestPC, { X = 1, Y = 4121823, Z = 2 }, { Pitch = 7, Yaw = 0, Roll = 0 })
+check("the same order arriving twice is bought once", handled == 1 and gm.Money == 25,
+      ("handled %d, money %s"):format(handled, tostring(gm.Money)))
+Computer.onGuest(guestPC, { X = 1, Y = 4121823, Z = 2 }, { Pitch = 8, Yaw = 0, Roll = 0 })
+check("an order the store cannot pay for is refused, not attempted",
+      handled == 1 and answers[2] and answers[2].ok == "0", ("handled %d, answer %s"):format(handled,
+      tostring(answers[2] and answers[2].ok)))
+
+-- The Search page: a guest's SKU answered from the game's own search, once.
+Computer.onGuest(guestPC, { X = 5, Y = 4121823, Z = 0 }, { Pitch = 9, Yaw = 0, Roll = 0 })
+Computer.onGuest(guestPC, { X = 5, Y = 4121823, Z = 0 }, { Pitch = 9, Yaw = 0, Roll = 0 })
+local f1 = found[1] or {}
+check("a guest's search is answered once, with the search card's movie, price and genre",
+      #found == 1 and probes == 1 and f1.f == "1" and f1.p == "1670" and f1.u == "1" and f1.s == "4121823"
+          and f1.l == Computer._readProduct(movie),
+      ("answers %d, searches run %d, found %s, price %s"):format(#found, probes, tostring(f1.f), tostring(f1.p)))
+Computer.onGuest(guestPC, { X = 5, Y = 31337, Z = 0 }, { Pitch = 10, Yaw = 0, Roll = 0 })
+check("a SKU the game does not know is answered \"not found\"", found[2] and found[2].f == "0",
+      tostring(found[2] and found[2].f))
+-- Buying it: the host screen's own search handler, with the search's card.
+local searchBuys = 0
+screenW["Search - Clicked on a Product Event"] = function(_, card, p)
+    searchBuys = searchBuys + 1
+    if card == skuCard and p == movie then gm.Money = gm.Money - card["Value in pennies"] end
+end
+gm.Money = 5000
+Computer.onGuest(guestPC, { X = 6, Y = 4121823, Z = 1670 }, { Pitch = 11, Yaw = 0, Roll = 0 })
+Computer.onGuest(guestPC, { X = 6, Y = 4121823, Z = 1670 }, { Pitch = 11, Yaw = 0, Roll = 0 })
+check("a guest's search buy goes through the host's own search handler, once, at the card's price",
+      searchBuys == 1 and gm.Money == 3330 and answers[3] and answers[3].ok == "1",
+      ("handled %d, money %s, answer %s"):format(searchBuys, tostring(gm.Money), tostring(answers[3] and answers[3].ok)))
+
+-- The Data page's numbers: genres researched (+ Adult), copies owned, times rented.
+local function fakeMap(t) return { ForEach = function(_, fn) for k, v in pairs(t) do fn(k, v) end end } end
+gm["Actor Gatherer"] = H.obj("Actor_Gatherer_C", { __isActor = false,
+    ["Research System"] = H.obj("Unlockable_System_C", { __isActor = false,
+        ["Movie Genres Unlock"] = { 3, 7, GetArrayNum = function() return 2 end },
+        ["Adult Genre Request Enable"] = true }),
+    ["Cartridge SKU Count Map"] = fakeMap({ [4121823] = 2 }),
+    RentSystem = H.obj("RentSystem_C", { __isActor = false, ["Cartridge SKU Times Rented"] = fakeMap({ [4121823] = 5 }) }) })
+Computer.onGuest(guestPC, { X = 0, Y = 0, Z = 0 }, { Pitch = 0, Yaw = 0, Roll = 0 })
+local dp = sent.cdata or {}
+check("the Data page's genres, copies and rentals go to a guest at the computer",
+      dp.g == "3,7,16" and dp.o == "4121823:2" and dp.r == "4121823:5",
+      ("genres %s, owned %s, rented %s"):format(tostring(dp.g), tostring(dp.o), tostring(dp.r)))
+gm["Actor Gatherer"] = nil
+check("a new release's standee picture is the thumbnail named after its SKU (movies only)",
+      Computer._standeePath(true, "19759") == "/Game/VideoStore/asset/prop/Standees/Thumbnail/"
+          .. "T_Standees_Collection_19759.T_Standees_Collection_19759"
+          and Computer._standeePath(false, "19759") == nil and Computer._standeePath(true, "0") == nil,
+      tostring(Computer._standeePath(true, "19759")))
+Chan.sendTo = savedSendTo
+UE.GetGameMode = realGM
+for p, o in pairs(savedPaths) do H.staticObjects[p] = o end
+for _, list in pairs({ H.world.objects["ComputerScreen_C"], H.world.objects["Market_C"] }) do
+    for i = #list, 1, -1 do if list[i] == cs or list[i] == mk then table.remove(list, i) end end
+end
+Computer.reset()
+
+hostPC.Pawn, guestPC.Pawn = savedHostPawn, savedGuestPawn
+UE.findAll = realFindAll
+os.clock = realClock
+GuestInput3.reset()
+UE._resetLookups()
+UE.beginFrame()
+end)()
+
+;(function()
+print("\n-- path lookups: one soft reference per path, made once --")
+-- MEASURED (15 Oct 2026): the three-call path lookup leaked 257 bytes a call in
+-- UE4SS, resolving a kept soft reference 86; classes are looked up every tick.
+local made, resolved = 0, 0
+local target = H.obj("BlueprintGeneratedClass", { __isActor = false })
+local PATH = "/Game/VideoStore/Test/Thing.Thing_C"
+local ksl = H.obj("KismetSystemLibrary", { __isActor = false,
+    MakeSoftObjectPath = function(_, p) return { path = p } end,
+    Conv_SoftObjPathToSoftObjRef = function(_, sp) made = made + 1 return { ref = sp.path } end,
+    Conv_SoftObjectReferenceToObject = function(_, r)
+        resolved = resolved + 1
+        return (r.ref == PATH) and target or nil
+    end })
+local KSL = "/Script/Engine.Default__KismetSystemLibrary"
+local savedKsl = H.staticObjects[KSL]
+H.staticObjects[KSL] = ksl
+UE._resetLookups()
+local found = 0
+for _ = 1, 5 do
+    UE.beginFrame()
+    if UE.findObject(PATH) == target then found = found + 1 end
+    UE.endFrame()
+end
+check("a path's soft reference is made once and only resolved after that, frame after frame",
+      found == 5 and made == 1 and resolved == 5,
+      ("found %d, references made %d, resolved %d"):format(found, made, resolved))
+check("StaticFindObject goes through the same kept reference",
+      StaticFindObject(PATH) == target and made == 1, ("references made %d"):format(made))
+H.staticObjects[KSL] = savedKsl
+UE._resetLookups()
+UE.beginFrame()
+end)()
+
+;(function()
+print("\n-- other players' bodies: one look per player, a walk that walks, things in hands --")
+-- REPORTED (15 Oct 2026): "player pawn animations and their look, some have
+-- broken textured shirts". Measured: a body in the mesh's default materials,
+-- bald, and its animation blueprint at Speed 0 / play rate 0 while walking.
+local Bodies3 = require("bodies")
+local Chan = require("rpcchan")
+local P2P = require("steamp2p")
+local realFindAll = UE.findAll
+UE.beginFrame()
+local hostPC = UE.GetPlayerController()
+local savedPawn = hostPC.Pawn
+H.theWorld.NetDriver.ServerConnection = H.obj("NetConnection", { __isActor = false })   -- a guest
+
+local function named(cls, path) local o = H.obj(cls, { __isActor = false }) H.staticObjects[path] = o return o end
+local BODY = "/Game/VideoStore/asset/character/Test/SK_Body.SK_Body"
+local body = named("SkeletalMesh", BODY)
+named("MaterialInstanceConstant", "/Game/VideoStore/asset/character/Test/MI_Top.MI_Top")
+named("Texture2D", "/Game/VideoStore/asset/character/Test/T_Top.T_Top")
+local HAIR = "/Game/VideoStore/asset/character/Test/SM_Hair.SM_Hair"
+local hairMesh = named("StaticMesh", HAIR)
+named("Class", "/Script/Engine.StaticMeshComponent")
+
+local swapped, mids, added = nil, {}, {}
+local inst = H.obj("AnimBP_Base_C", { __isActor = false, Speed = 0.0 })
+local mesh = H.obj("SkeletalMeshComponent", { __isActor = false,
+    GetAnimInstance = function() return inst end,
+    SetSkinnedAssetAndUpdate = function(self, a) swapped = a self.SkeletalMeshAsset = a end,
+    GetMaterial = function() return nil end,
+    GetMaterialIndex = function() return -1 end,
+    CreateDynamicMaterialInstance = function(_, i, parent)
+        local mid = H.obj("MaterialInstanceDynamic", { __isActor = false, Parent = parent, slot = i,
+            SetTextureParameterValue = function(self, _, t) self.tex = t end,
+            SetVectorParameterValue = function(self, _, c) self.tint = c end })
+        mids[#mids + 1] = mid
+        return mid
+    end,
+    SetMorphTarget = function() end })
+local function socket(name)
+    return H.obj("SceneComponent", { __isActor = false, name = name, RelativeLocation = { X = -80, Y = 0, Z = -20 },
+        GetNumChildrenComponents = function(self) return self.kids or 0 end,
+        K2_AttachToComponent = function(self, parent, sock) self.parent, self.sock = parent, sock:ToString() return true end,
+        K2_SetRelativeLocation = function(self, loc) self.RelativeLocation = loc end })
+end
+local hand, stack = socket("hand"), socket("stack")
+local me = H.obj("Player_Character_C", {})
+local other = H.obj("Player_Character_C", {
+    PlayerState = H.obj("PlayerState", { __isActor = false, PlayerId = 7 }),
+    Mesh = mesh,
+    GetVelocity = function() return { X = 300, Y = 0, Z = 0 } end,
+    ["AttachObject Socket"] = hand, ["AttachObject Inventory Socket"] = stack,
+    AddComponentByClass = function()
+        local c = H.obj("StaticMeshComponent", { __isActor = false,
+            K2_AttachToComponent = function(self, parent, sock) self.parent, self.sock = parent, sock:ToString() return true end,
+            SetStaticMesh = function(self, m) self.mesh = m end,
+            SetVisibility = function(self, v) self.shown = v end,
+            SetCollisionEnabled = function(self, v) self.collision = v end,
+            GetMaterial = function() return nil end,
+            CreateDynamicMaterialInstance = function() return nil end })
+        added[#added + 1] = c
+        return c
+    end })
+hostPC.Pawn = me
+UE.findAll = function(short)
+    if short == "Player_Character_C" then return { me, other } end
+    if short == "PlayerState" then return { other.PlayerState } end
+    return realFindAll(short)
+end
+
+-- The host's look for player 7 arrives.
+Chan.installReceiver()
+local look = { p = "7", m = BODY,
+    s1 = "/Game/VideoStore/asset/character/Test/MI_Top.MI_Top|/Game/VideoStore/asset/character/Test/T_Top.T_Top|0.5,0.2,0.1",
+    h = HAIR, hm = "", f = "", a = "" }
+H.hooks["/Script/Engine.PlayerController:ClientMessage"](hostPC, P2P.encode("plook", look))
+Chan.pump()
+local key = other:GetFullName()
+Bodies3._books().dressed[key] = 3          -- a body is already on it
+UE._resetLookups()
+UE.beginFrame()
+Bodies3.tick(os.clock() + 5000)
+check("a player's body wears the host's look: its body, by the safe swap",
+      swapped == body, "body " .. tostring(swapped))
+local top = nil
+for _, m in ipairs(mids) do if m.slot == 1 then top = m end end
+check("and its shirt as a dressed material (texture and tint), not the mesh's default",
+      top ~= nil and top.tex ~= nil and top.tint ~= nil and math.abs(top.tint.R - 0.5) < 1e-6,
+      top and ("tex %s tint %s"):format(tostring(top.tex), tostring(top.tint)) or "no material made for the top")
+local hair = added[1]
+check("and hair, on the head socket, that nothing bumps into",
+      hair ~= nil and hair.mesh == hairMesh and hair.sock == "HeadTop_EndSocket" and hair.parent == mesh
+      and hair.shown == true and hair.collision == 0,
+      hair and ("mesh %s socket %s shown %s collision %s"):format(tostring(hair.mesh), tostring(hair.sock),
+      tostring(hair.shown), tostring(hair.collision)) or "no component added")
+check("what they carry goes in their hands (right hand, the stack in the left)",
+      hand.sock == "hand_rSocket" and stack.sock == "hand_lSocket" and hand.parent == mesh,
+      ("hand %s, stack %s"):format(tostring(hand.sock), tostring(stack.sock)))
+check("the borrowed animation blueprint is told how fast they walk (it cannot find out itself)",
+      inst.Speed == 300 and math.abs((inst["Scale Character Play Rate"] or 0) - 300 / 144) < 1e-6
+      and inst["Is Holding Something"] == false,
+      ("Speed %s, rate %s, holding %s"):format(tostring(inst.Speed), tostring(inst["Scale Character Play Rate"]),
+      tostring(inst["Is Holding Something"])))
+-- Picking something up: the hand socket has a child, and the host's first-person
+-- "bring up" timeline has moved the socket off the hand.
+hand.kids, hand.RelativeLocation = 1, { X = -80, Y = 0, Z = -25 }
+UE.beginFrame()
+Bodies3.tick(os.clock() + 5000.5)
+check("carrying: the carrying pose, and the socket stays on the hand",
+      inst["Is Holding Something"] == true and hand.RelativeLocation.X == 0 and hand.RelativeLocation.Z == 0,
+      ("holding %s, socket at %s,%s"):format(tostring(inst["Is Holding Something"]),
+      tostring(hand.RelativeLocation.X), tostring(hand.RelativeLocation.Z)))
+local wornBefore = #mids
+UE.beginFrame()
+Bodies3.tick(os.clock() + 5010)
+check("the same look is not put on again every poll", #mids == wornBefore, ("%d more materials made"):format(#mids - wornBefore))
+
+hostPC.Pawn = savedPawn
+UE.findAll = realFindAll
+H.theWorld.NetDriver.ServerConnection = nil
+Bodies3.reset()
 UE._resetLookups()
 UE.beginFrame()
 end)()

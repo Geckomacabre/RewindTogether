@@ -23,6 +23,15 @@ each bug actually was.
   `py dev/bridge.py B "lua return ..."`. Slot A = first instance, B = second. Each slot also
   writes `RewindTogether.trace.<slot>`: the last tick phase that started, which is how a
   native crash gets pinned to a phase.
+- **A bad connection, on one PC:** `py dev/netsim.py --lag 300 --jitter 80 --loss 5` is a UDP
+  proxy on 127.0.0.1:27016 (`--listen` for another port) in front of the host's 27015; guests
+  join it with `py dev/coop_test.py up 127.0.0.1:27016` (`guest-only <address>` adds one more
+  guest, slot C, D). Packets keep their order unless `--reorder`. Unreal's NetEmulation is
+  compiled out of Shipping, hence the proxy.
+- **Does every guest see the host's store?** `py dev/worldcheck.py` pairs every tape, box, shelf,
+  decoration, poster and standee of the host with the nearest of each guest's, and compares
+  money, level, XP, day, clock, season and weather. `--wait 300` right after a join repeats it
+  until it matches and says how long that took (measured: 15-19 s, also through 300 ms / 5% loss).
 - **Releasing a new version** (players' launchers offer it as a one-click update):
   1. bump the version in `Mods/RewindTogether/mod.json`, `Net.VERSION` in `net.lua` and the top
      of `VERSION.txt` (with what changed). Every update needs a NEW number: launchers compare
@@ -121,6 +130,55 @@ each bug actually was.
   casts GetGameMode to `Core_Gamemode_C` and stops there on a guest. pausemenu.lua opens the same
   `UI_ESC-Menu_C` (WidgetBlueprintLibrary Create + AddToViewport) and adds "Back to the store"
   to every pause menu (host too): a guest asks the host (action 12) to be placed beside them.
+- **UE4SS's `StaticFindObject` walks every object in the engine** - 2-29 ms a call on the host
+  (a class default 2.2, a Blueprint class 7.5, a function 8.0, a missing path 28.7; only native
+  classes are fast). The host crashed twice with two guests inside that walk (UE4SS
+  `FindObject` -> `ForEachUObject` -> `UObject::GetOutermost`, reading through an object being
+  torn down; offsets matched to UE4SS.dll's exports), from tick phases calling it on timers.
+  ue.lua now replaces the global with `UE.staticFind` (KismetSystemLibrary soft-path route,
+  0.1 ms, the same answers on ten kinds of path); native paths are kept for good. `FindFirstOf`
+  / `FindAllOf` walk too: learning a missing class gives up after 6 tries per world, and a
+  component class (`Shelve_Container_C` is a StaticMeshComponent) is walked at most once a
+  minute.
+- **The office computer is the host's.** Its screen widget's Construct casts GetGameMode and
+  stops on a guest, so every page there kept the designer's placeholders. computer.lua: the host
+  sends what its computer shows (guest action 13 asks); the guest makes the game's own cards and
+  writes their struct fields in place (never a whole Product_Structure: it holds TSets); the
+  card's own Construct draws it. The price and "Old" tag (they need the release date, an
+  FDateTime UE4SS can't write) come from the host. A new-release card's Construct has the same
+  gate, so its body is run from just past it (`ExecuteUbergraph_...(2022)`). A Buy click is an
+  order (action 13 + a sequence number); the host runs its screen's own handler with a
+  throwaway card carrying the price: the market's checks, spawn, charge, quests.
+  Search ("Black Market", kinds 5/6): the guest's own search stops at Unlockable_Function
+  "Return Research" (GameMode); the host runs the search box's Committed event on a
+  UI_ScreenComputer_Widget it creates and never shows (its own Search page untouched), takes the
+  UI_Computer_Product-SKU card it made, prices it with the card's own "Generate Value in
+  Pennies" (movie x1.2 researched genre / x3.5 not, +500) and answers "csku". A buy calls the
+  real screen's "Search - Clicked on a Product Event" with that card: Steam achievement 17 on
+  the host (the class check @10306), by the user's choice. Create Film Data is deterministic per
+  SKU (random streams seeded with it). Data: "Generate A Data" / Film_Data "Return Data by ID"
+  read only data tables and work on a guest; the host sends the genres (Research System "Movie
+  Genres Unlock" + 16 if "Adult Genre Request Enable"), "Cartridge SKU Count Map" and RentSystem
+  "Cartridge SKU Times Rented"; a DataSlot's Set copies / Set Times Rented stop at the GameMode
+  and leave the text the mod wrote.
+- **Other players' bodies (bodies.lua).** The town's animation blueprint (AnimBP_Base_C) casts
+  its pawn to AI_Base_Character_C in its update (@4578) and stops on a player: Speed and Scale
+  Character Play Rate stayed 0 (measured), so the body idled or walked frozen. bodies.lua writes
+  Speed, the play rate (speed / 144 cm/s, the town's walk cycle) and Is Holding Something every
+  tick. The body was the NPC mesh in its default materials, bald: now the HOST picks a town NPC's
+  look per PlayerId (npcsync's readLook; a different NPC each), sends it ("plook"), and every
+  machine dresses the body with npcsync's calls (Npc.look) plus hair/beard/glasses as
+  StaticMeshComponents made with AddComponentByClass on HeadTop_EndSocket. A held item hangs on
+  "AttachObject Socket" under the first-person camera rig; on machines where that player is
+  somebody else the socket goes on the body's hand_rSocket (the stack's on hand_lSocket), kept
+  there every tick (a guest's pickup on the host plays the socket's "bring up" timeline).
+  Body swaps use SetSkinnedAssetAndUpdate(mesh, true), never SetSkeletalMeshAsset.
+- **Physics moves a thrown item's mesh, not the item.** `Toggle Simulate Physic` simulates the
+  Mesh, which leaves its parent; the root (what replicates) stays where it was let go, so guests
+  saw thrown tapes in mid-air. thrown.lua hooks the toggle and keeps the root on the mesh.
+- **A guest who leaves holding something leaves it in mid-air** (destroying the pawn only
+  detaches it). guestinput.lua notes what each guest carries (`Object Hold` + `Objects
+  Inventory`) and drops it the game's way when the guest is gone.
 - **The level's AI Director runs on a guest too** (ActorGatherer calls Init Director on every
   machine) and spawned walk-bys of its own there: Role Authority, no controller, frozen at the
   spawn points. npcsync.lua stops its timer and removes them; everything real arrives by
@@ -131,6 +189,12 @@ each bug actually was.
 - A Lua string passed for an **FName** parameter → native crash. Use `FName("x")`.
 - A Lua string passed for a **TSoftObjectPtr** parameter → native crash. Build one with
   KismetSystemLibrary `MakeSoftObjectPath` → `Conv_SoftObjPathToSoftObjRef`.
+- **A soft reference read from a property loses its FName numbers.** A new release's
+  Standeereference read in Lua and turned to a string gave
+  `.../Standees_Collection.Standees_Collection_19759_C`: the package is
+  `Standees_Collection_19759`, an FName stored as "Standees_Collection" + number 19760, and the
+  number was gone. Nothing loads from it. Load such assets by a path string instead
+  (computer.lua: UE4SS `LoadAsset(path)`, then `UE.load`).
 - **Out-parameters followed by more parameters** can't be called (the table is never
   consumed). Struct out-params like `FHitResult` with `{}` do work.
 - **Struct fields come back in the FName table's casing** (`FRotator.pitch`). Use
@@ -197,6 +261,23 @@ each bug actually was.
   is a native crash** (reads null+0x18; `pcall` does not catch it). Measured: a dev-bridge probe
   named `stash:GetAttachParentActor()` on a guest the instant the cash replicated, before its
   attachment had - the guest died. Check `UE.valid(x)` / `x:IsValid()` first.
+- **Engine calls that pass or return a struct leak memory in UE4SS, a few hundred bytes each.**
+  Measured (200,000 calls each, private bytes after two Lua collections; a plain
+  `IsValid(obj)` control 0-1 bytes): `K2_GetActorLocation` 279 bytes, the three-call path
+  lookup (MakeSoftObjectPath + Conv_SoftObjPathToSoftObjRef + Conv_SoftObjectReferenceToObject)
+  257, `Conv_SoftObjectReferenceToObject` on a kept reference 86; plain number and object
+  property reads nothing. So hot paths avoid struct calls where they can: ue.lua keeps one
+  TSoftObjectPtr per path (a value, safe across frames) and resolves only that. Whole-session
+  memory (Private Bytes) swings by +-200 MB an hour over a few minutes by itself, so a fix
+  this size is measured per call, never by a short session window.
+- **Out-parameters all land in the FIRST table you pass**, keyed by name; UE4SS still wants an
+  argument for each. `Format Date in RR` (five outs): Season, Year, Day, Date Format Text, Day
+  and Season, all in the first table.
+- **Struct properties come back as wrappers onto the object's own memory**, nested ones too:
+  `card.Product[BASE][BOX][SKU] = 1234` writes in place (ints, bytes, bools, `FName(...)`, Lua
+  strings for FString, and a TSoftObjectPtr built with `Conv_SoftObjPathToSoftObjRef`).
+  `FDateTime` has no readable fields (`Ticks` reads nil). User-defined struct fields carry their
+  GUID suffix (`BaseStructure_2_FBB12C464AE570CAFD12ED8506160683`); the header dump has them.
 - **test/smoke.lua's main chunk is at Lua's 200-local limit.** A new section goes inside
   `do ... end`.
 - **UE4SS caches every member name by a pointer into the Lua string, and never copies it.**
@@ -225,6 +306,9 @@ each bug actually was.
 | `dayend.lua` | The end of the day on a guest: the host's summary (`UI_EndOfTheDay_C`) rebuilt and filled with the host's texts, closed when the host's closes, then the new-day banner (`UI_NewDay_C`) |
 | `native.lua` + `native\RewindNative\` | `RewindNative.dll`: the player-0 redirect, the guest HUD stand-in and the UE4SS name-cache repair (see below) |
 | `launchfile.lua` | The launcher contract: `launch.json` in, `status.json` out |
+| `pausemenu.lua` | A pause menu for guests (the game's own UI_ESC-Menu) and "Back to the store" in every pause menu |
+| `thrown.lua` | Host: keeps a thrown or dropped item's replicated root on its physics mesh, so it lands in the same place on every screen |
+| `computer.lua` | The office computer for guests: the host's desktop, market, new releases, Black Market search and Data page on the guest's screen; a guest's Buy replayed through the host screen's own handler |
 
 ### The native helper
 

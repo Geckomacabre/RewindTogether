@@ -3,7 +3,8 @@ Two-instance co-op test on ONE machine, driven end to end.
 
     py dev/coop_test.py up          # host loads save 1 and hosts, guest joins 127.0.0.1
     py dev/coop_test.py host-only   # just the host part
-    py dev/coop_test.py guest-only  # launch a guest and join a host that is already up
+    py dev/coop_test.py guest-only  # launch a guest and join a host that is already up (again: a third player)
+    py dev/coop_test.py up 127.0.0.1:27016   # guests join through dev/netsim.py (lag and loss)
     py dev/coop_test.py down        # kill both by PID
     py dev/coop_test.py log [N]     # last N lines of both instances' log since the last join
 
@@ -130,16 +131,19 @@ def host_only(launch=True):
     print("host up, pid", a)
 
 
-def guest_only():
+def guest_only(address="127.0.0.1"):
+    """Another guest. Each new copy takes the next free bridge slot (B, then C...)."""
+    before = set(bridge.slots())
     env = dict(os.environ, SteamAppId="3552140", SteamGameId="3552140")
     subprocess.Popen([EXE, "RetroRewind"], cwd=WIN64, env=env)
-    wait(lambda: "B" in bridge.slots(), 150, "instance B's bridge")
+    wait(lambda: set(bridge.slots()) - before, 150, "the new copy's bridge")
+    slot = sorted(set(bridge.slots()) - before)[0]
     b = pids()[-1]
     layout()
     time.sleep(6)
-    print(ask("B", "rt.join 127.0.0.1"))
-    wait(lambda: "Client" in ask("B", 'lua return require("ue").NetModeName()'), 60, "guest to connect")
-    print("guest joined, pid", b)
+    print(ask(slot, "rt.join " + address))
+    wait(lambda: "Client" in ask(slot, 'lua return require("ue").NetModeName()'), 90, "guest %s to connect" % slot)
+    print("guest %s joined, pid %d" % (slot, b))
 
 
 def tail_log(n):
@@ -155,15 +159,18 @@ def tail_log(n):
 
 def main(a):
     cmd = a[0] if a else "up"
+    # Where guests join: 127.0.0.1 straight to the host, or e.g. 127.0.0.1:27016
+    # through dev/netsim.py (lag, jitter and loss).
+    address = a[1] if len(a) > 1 else "127.0.0.1"
     if cmd == "up":
         host_only()
-        guest_only()
+        guest_only(address)
     elif cmd == "host-only":
         host_only()
     elif cmd == "host-attach":
         host_only(launch=False)
     elif cmd == "guest-only":
-        guest_only()
+        guest_only(address)
     elif cmd == "down":
         for p in pids():
             subprocess.run(["taskkill", "/PID", str(p), "/F"])

@@ -100,6 +100,13 @@ local LOSE_RADIUS  = 600
 local PREFIX       = "/Game/VideoStore/asset/character/"
 local RESTYLE_OP   = "restyling the town's NPCs on a guest"
 local STRAYS_OP    = "removing the NPCs a guest's own game spawns"
+-- The host's side in three parts, so a crash names which. MEASURED (3-player
+-- test through a lag proxy, 15 Oct 2026): the host died idle, six minutes in,
+-- reading through 0xffffffffffffffff inside UE4SS with only "NpcSync.tickHost"
+-- on the breadcrumb - which, being a tick phase, switches nothing off.
+local STATE_OP     = "sending where the NPCs are and what they are doing to guests (host)"
+local LOOKS_OP     = "sending the NPCs' looks to guests (host)"
+local STASH_OP     = "showing guests the cash a customer holds out (host)"
 local MAX_SLOTS    = 8        -- body material slots (measured: 8 on every body)
 local HEAD_SLOTS   = 3        -- on a hair / beard / glasses mesh; a hat has 2
 local SWEEP_EVERY  = 2.0      -- guest: the AI Director and stray-NPC check
@@ -441,10 +448,11 @@ function Npc.tickHost(now)
     if now - lastState < STATE_EVERY then return end
     lastState = now
 
-    local entries, looks, alive = {}, 0, {}
-    eachNpc(function(npc, code)
+    local entries, due, alive = {}, {}, {}
+    Safety.guard(STATE_OP, eachNpc, function(npc, code)
             if UE.alive(npc) and UE.TryGet(npc, "bHidden") ~= true then
                 local id = idOf(npc)
+                if UE.trace then UE.trace("npc state", id) end
                 local okL, rawL = pcall(function() return npc:K2_GetActorLocation() end)
                 local l = okL and UE.vec(rawL) or nil
                 if id and l then
@@ -455,7 +463,8 @@ function Npc.tickHost(now)
                     -- its class does not replicate. REPORTED: on a guest the
                     -- customer held out an empty hand (the basket, see below).
                     local stash = UE.TryGet(npc, "Money Stash")
-                    if UE.alive(stash) then Replication.patchActor(stash) end
+                    if UE.alive(stash) then Safety.guard(STASH_OP, Replication.patchActor, stash) end
+                    if UE.trace then UE.trace("npc bubble", id) end
                     local bubble, icon = readBubble(npc)
                     entries[#entries + 1] = table.concat({
                         id:match("(%d+)$") or id, code,
@@ -466,18 +475,21 @@ function Npc.tickHost(now)
                         num(UE.TryGet(npc, "Current Emotion")),
                         bubble, icon,
                     }, ",")
-
-                    if looks < LOOKS_PER_TICK and (now - (lookSentAt[id] or -1e9)) > LOOK_EVERY then
-                        local look = readLook(npc, id:match("(%d+)$") or id, code)
-                        if look then
-                            Chan.broadcast("npca", look)
-                            lookSentAt[id] = now
-                            looks = looks + 1
-                        end
+                    if #due < LOOKS_PER_TICK and (now - (lookSentAt[id] or -1e9)) > LOOK_EVERY then
+                        due[#due + 1] = { npc = npc, id = id, code = code }
                     end
                 end
             end
     end)
+    -- Read in this same tick, so the actors are the ones just checked alive.
+    for _, d in ipairs(due) do
+        if UE.trace then UE.trace("npc look", d.id) end
+        local ran, look = Safety.guard(LOOKS_OP, readLook, d.npc, d.id:match("(%d+)$") or d.id, d.code)
+        if ran and look then
+            Chan.broadcast("npca", look)
+            lookSentAt[d.id] = now
+        end
+    end
     for id in pairs(lookSentAt) do if not alive[id] then lookSentAt[id] = nil end end
     for id in pairs(permanent) do
         local here = false
@@ -610,6 +622,39 @@ local function applySize(npc, mesh, look)
     end
 end
 
+--- A body's clothes, skin and eyes from a look: its eight material slots, then
+--- the skin tone and eyelid height on the two eye materials. The town's NPCs
+--- (applyLook) and, through bodies.lua, the other players.
+local function dressBody(mesh, look)
+    for i = 0, MAX_SLOTS - 1 do
+        local spec = look["s" .. i]
+        if type(spec) == "string" and spec ~= "" then dressSlot(mesh, i, spec) end
+    end
+
+    -- Skin tone and eyelids live on the eye materials. The host's eyelid blinks
+    -- from its tick; a guest's NPC keeps it open at this NPC's own height.
+    local lidX, lidY = (look.eb or ""):match("^([%d%.%-]+),([%d%.%-]+)$")
+    for _, eye in ipairs({ "EyeL", "EyeR" }) do
+        local mat = nil
+        pcall(function() mat = mesh:GetMaterial(slotIndex(mesh, eye)) end)
+        if UE.valid(mat) then
+            for key, r, g, b in (look.e or ""):gmatch("(%a)=([%d%.%-]+),([%d%.%-]+),([%d%.%-]+);") do
+                local name = key == "s" and "Skin Tone" or "SSS Skin Tone"
+                pcall(function()
+                    mat:SetVectorParameterValue(FName(name),
+                        { R = tonumber(r), G = tonumber(g), B = tonumber(b), A = 1.0 })
+                end)
+            end
+            if lidX then
+                pcall(function()
+                    mat:SetVectorParameterValue(FName("Eyelid"),
+                        { R = tonumber(lidX), G = tonumber(lidY), B = 0.0, A = 1.0 })
+                end)
+            end
+        end
+    end
+end
+
 local function applyLook(npc, look)
     local mesh = UE.TryGet(npc, "Mesh")
     if not UE.valid(mesh) then return false end
@@ -655,33 +700,7 @@ local function applyLook(npc, look)
     -- NPC's own event: three K2_AttachToComponent calls to HeadTop_EndSocket.
     pcall(function() npc["Attach Child to Skeletal"](npc) end)
 
-    for i = 0, MAX_SLOTS - 1 do
-        local spec = look["s" .. i]
-        if type(spec) == "string" and spec ~= "" then dressSlot(mesh, i, spec) end
-    end
-
-    -- Skin tone and eyelids live on the eye materials. The host's eyelid blinks
-    -- from its tick; a guest's NPC keeps it open at this NPC's own height.
-    local lidX, lidY = (look.eb or ""):match("^([%d%.%-]+),([%d%.%-]+)$")
-    for _, eye in ipairs({ "EyeL", "EyeR" }) do
-        local mat = nil
-        pcall(function() mat = mesh:GetMaterial(slotIndex(mesh, eye)) end)
-        if UE.valid(mat) then
-            for key, r, g, b in (look.e or ""):gmatch("(%a)=([%d%.%-]+),([%d%.%-]+),([%d%.%-]+);") do
-                local name = key == "s" and "Skin Tone" or "SSS Skin Tone"
-                pcall(function()
-                    mat:SetVectorParameterValue(FName(name),
-                        { R = tonumber(r), G = tonumber(g), B = tonumber(b), A = 1.0 })
-                end)
-            end
-            if lidX then
-                pcall(function()
-                    mat:SetVectorParameterValue(FName("Eyelid"),
-                        { R = tonumber(lidX), G = tonumber(lidY), B = 0.0, A = 1.0 })
-                end)
-            end
-        end
-    end
+    dressBody(mesh, look)
 
     -- A member of staff's name badge (Staff_NameSticker, a child actor).
     if type(look.nm) == "string" and look.nm ~= "" then
@@ -696,8 +715,7 @@ local function applyLook(npc, look)
 end
 
 --- The mouth and the two face morph targets for an emotion.
-local function applyFace(npc, emo)
-    local mesh = UE.TryGet(npc, "Mesh")
+local function faceOn(mesh, emo)
     if not UE.valid(mesh) or MOUTH_FRAME[emo] == nil then return end
     local mouth = nil
     pcall(function() mouth = mesh:GetMaterial(slotIndex(mesh, "Mouth")) end)
@@ -709,6 +727,8 @@ local function applyFace(npc, emo)
         mesh:SetMorphTarget(FName("Angry"), ANGRY[emo], true)
     end)
 end
+
+local function applyFace(npc, emo) faceOn(UE.TryGet(npc, "Mesh"), emo) end
 
 --- The thought bubble: shown with the host's icon, or hidden.
 local function applyBubble(npc, shown, icon)
@@ -963,5 +983,22 @@ function Npc.init(config)
     Chan.on("npca", function(f) Log.guard("npc look", onLook, f) end)
     Chan.on("npct", function(f) Log.guard("npc speech", onSpeech, f) end)
 end
+
+--[[
+    For bodies.lua. The other players wear a town NPC's look - read off a live
+    NPC and rebuilt with exactly the calls above - instead of only the NPC's
+    bare body mesh, which shows that mesh's default materials: REPORTED, "some
+    have broken textured shirts", and measured on the host, a guest's body in
+    MI_CHA_Cloth_Tshirt_01 itself where every NPC wears a dynamic material of
+    it with its own texture and tint.
+]]
+Npc.look = {
+    read = function(npc) return readLook(npc, "0", "W") end,
+    dressBody = dressBody,
+    dressSlot = dressSlot,
+    asset = asset,
+    face = faceOn,
+    HEAD = HEAD,
+}
 
 return Npc

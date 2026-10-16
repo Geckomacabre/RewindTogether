@@ -208,8 +208,8 @@ handlers["rt.status"] = function(_, dev)
     out(dev, ("  Replication: %d classes, %d instances"):format(st.classes, st.instances))
     -- What finding things has cost since the game started (ue.lua).
     local lk = UE.lookupStats()
-    out(dev, ("  Lookups: %d by path, %d actor lists (%d actors), %d full walks")
-        :format(lk.objects, lk.lists, lk.listed, lk.walks))
+    out(dev, ("  Lookups: %d by path (%d kept references), %d actor lists (%d actors), %d full walks")
+        :format(lk.objects, lk.refs or 0, lk.lists, lk.listed, lk.walks))
     if UE.IsClient() then
         local n = require("npcsync").stats()
         out(dev, ("  NPCs: %d from the host, %d paired here, %d looks known"):format(n.host, n.matched, n.looks))
@@ -478,6 +478,8 @@ handlers["rt.diag"] = function(_, dev)
     local st = Replication.stats()
     out(dev, ("  Replication:    %d classes / %d instances"):format(st.classes, st.instances))
     for _, line in ipairs(require("pausemenu").report()) do out(dev, "  " .. line) end
+    for _, line in ipairs(require("thrown").report()) do out(dev, "  " .. line) end
+    for _, line in ipairs(require("computer").report()) do out(dev, "  " .. line) end
     out(dev, "  Set LogLevel = \"debug\" in config.lua for full detail.")
     return true
 end

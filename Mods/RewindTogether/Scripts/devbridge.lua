@@ -154,6 +154,7 @@ local function start()
     writeAll(outPath, "")
     writeAll(beatPath, tostring(os.time()))
     enabled = true
+    require("ue").trace = Bridge.sub
     Log.setTag(slot)
     Log.warn("dev bridge ON as slot %s (delete %s to turn it off)", slot, ENABLE_FILE)
 end
@@ -163,15 +164,35 @@ end
 --- tick afterwards. One file per slot, rewritten in place: after a crash it
 --- holds the last phase that started. Dev bridge only; a no-op otherwise.
 local traceFh = nil
-function Bridge.phase(name)
-    if not enabled then return end
+local lastPhase = "-"
+local function trace(line)
     if not traceFh then
         traceFh = io.open(("RewindTogether.trace.%s"):format(slot), "w")
         if not traceFh then return end
     end
+    -- Padded, so a shorter line rewritten in place leaves nothing of a longer
+    -- one behind. (Lua's format widths stop at 99, hence the rep.)
+    local text = ("%.3f %s"):format(os.clock(), line)
+    if #text < 160 then text = text .. string.rep(" ", 160 - #text) end
     traceFh:seek("set", 0)
-    traceFh:write(("%.3f %-60s\n"):format(os.clock(), name))
+    traceFh:write(text .. "\n")
     traceFh:flush()
+end
+
+function Bridge.phase(name)
+    if not enabled then return end
+    lastPhase = name
+    trace(name)
+end
+
+--- A finer step inside the current phase: ue.lua's engine calls (UE.trace).
+--- MEASURED (15 Oct 2026): the host crashed twice inside UE4SS with only
+--- "NpcSync.tickHost" and "World.tickHost" on the trace - the same native
+--- stack both times, so something both phases share, and the phase alone
+--- could not say what.
+function Bridge.sub(what, arg)
+    if not enabled then return end
+    trace(lastPhase .. " > " .. what .. " " .. tostring(arg or ""))
 end
 
 function Bridge.isEnabled() return enabled end

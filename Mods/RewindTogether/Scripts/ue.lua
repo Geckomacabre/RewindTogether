@@ -208,6 +208,8 @@ end
 
 local cache = {}
 local frameOpen = false
+-- UE4SS's own, kept before StaticFindObject is replaced (below UE.findObject).
+local realStaticFindObject = StaticFindObject
 local lastTickPc = nil   -- only for the test harness; see peekPlayerController
 
 --- Outside a tick nothing is remembered, so a lookup made from the key poll
@@ -232,13 +234,13 @@ local stats = { objects = 0, lists = 0, listed = 0, walks = 0 }
 
 function UE.lookupStats()
     return { objects = stats.objects, lists = stats.lists, listed = stats.listed,
-             walks = stats.walks }
+             walks = stats.walks, refs = UE._softRefCount and UE._softRefCount() or 0 }
 end
 
 local function libraryDefault(key, path)
     local o = roots[key]
     if o ~= nil and valid(o) then return o end
-    o = StaticFindObject(path)
+    o = realStaticFindObject(path)
     if valid(o) then
         roots[key] = o
         return o
@@ -279,6 +281,36 @@ local function engineRoute()
     return gs, gi
 end
 
+--[[
+    SOFT REFERENCES, KEPT. Resolving a path through KismetSystemLibrary is three
+    calls; MEASURED (15 Oct 2026, 200,000 calls each, the control 0-1 bytes):
+      MakeSoftObjectPath + Conv_SoftObjPathToSoftObjRef + Conv_..ToObject  257 bytes a call
+      Conv_SoftObjectReferenceToObject alone, on a kept reference          86 bytes a call
+    never freed by UE4SS - so every class looked up once per tick (UE.findAll,
+    UE.findFirst: ~13 a second on a host with one guest) leaked ~12 MB an hour.
+    A TSoftObjectPtr is a VALUE - a weak pointer plus the path - and is safe to
+    keep where an object pointer is not (PROJECT.md 5): resolving it checks the
+    weak pointer against the object array's serial number, so a freed object is
+    never handed back, and a stale one is looked up by path again. Measured:
+    kept references stay independent (A, then B, then 50 more: A still A) and
+    resolve the same in a later frame. So each path's reference is made once.
+]]
+local softRefs, softCount, SOFT_MAX = {}, 0, 512
+function UE._softRefCount() return softCount end
+
+local function softRefOf(ksl, path)
+    local r = softRefs[path]
+    if r ~= nil then return r end
+    -- A bound, not an eviction policy: the mod looks up a few dozen paths.
+    if softCount >= SOFT_MAX then softRefs, softCount = {}, 0 end
+    r = ksl:Conv_SoftObjPathToSoftObjRef(ksl:MakeSoftObjectPath(path))
+    if r ~= nil then
+        softRefs[path] = r
+        softCount = softCount + 1
+    end
+    return r
+end
+
 --- A loaded object from its path - an asset, a class, a placed actor -
 --- without loading anything and without StaticFindObject's 1-2 ms. nil when
 --- it is not in memory.
@@ -301,19 +333,62 @@ function UE.findObject(path)
     local ksl = kismet()
     local ok = false
     if ksl then
+        if UE.trace then UE.trace("findObject", path) end
         stats.objects = stats.objects + 1
-        ok = pcall(function()
-            o = ksl:Conv_SoftObjectReferenceToObject(
-                    ksl:Conv_SoftObjPathToSoftObjRef(ksl:MakeSoftObjectPath(path)))
-        end)
+        ok = pcall(function() o = ksl:Conv_SoftObjectReferenceToObject(softRefOf(ksl, path)) end)
     end
     -- MEASURED: a path that is not loaded comes back as a wrapper around
     -- nullptr, not as nil.
-    if not ok then o = StaticFindObject(path) end
+    if not ok then o = realStaticFindObject(path) end
     if not valid(o) then o = nil end
     cache[key] = o or false
     return o
 end
+
+--[[
+    StaticFindObject, WITHOUT THE WALK.
+
+    MEASURED (15 Oct 2026, on the host): UE4SS's StaticFindObject takes 11 ms
+    a call. It is UE4SS's own FindObject - a walk over every object in the
+    engine - where UE.findObject (above) finds the same object in 0.1 ms; ten
+    kinds of path compared (library defaults, native and Blueprint classes, a
+    Blueprint function, a placed actor, a missing path): the same answer every
+    time. The host crashed twice with three players inside exactly that walk
+    (UE4SS UObjectGlobals::FindObject -> ForEachUObject -> UObject::GetOutermost,
+    reading through an object that was going away), each time in a tick phase
+    that calls StaticFindObject on a timer (NpcSync.tickHost: its speech hooks,
+    every 5 s; World.tickHost: the sky). Fifty-odd calls in this mod, a few of
+    them every few seconds for good.
+
+    So the global is replaced, for every module at once. The engine's own
+    classes and library defaults never unload, so those are kept; anything
+    else is looked up each time. The walk is only the fallback for a path the
+    soft-path route could not take at all (no KismetSystemLibrary yet).
+]]
+local forever = {}           -- "/Script/..." path -> object: never unloads
+
+--- The soft-path route alone: ok is false when it could not be taken.
+local function softResolve(path)
+    local ksl = kismet()
+    if not ksl then return false, nil end
+    local o = nil
+    local ok = pcall(function() o = ksl:Conv_SoftObjectReferenceToObject(softRefOf(ksl, path)) end)
+    if not ok then return false, nil end
+    stats.objects = stats.objects + 1
+    if not valid(o) then o = nil end
+    return true, o
+end
+
+function UE.staticFind(path)
+    if type(path) ~= "string" or path == "" then return realStaticFindObject(path) end
+    local kept = forever[path]
+    if kept ~= nil and valid(kept) then return kept end
+    local ok, o = softResolve(path)
+    if not ok then return realStaticFindObject(path) end
+    if o ~= nil and path:sub(1, 8) == "/Script/" then forever[path] = o end
+    return o
+end
+if realStaticFindObject ~= nil then _G.StaticFindObject = UE.staticFind end
 
 --- An object's path, to find it again in a later frame with UE.findObject
 --- (0.03 ms, measured on the guest's HUD widget). That is how to remember an
@@ -366,6 +441,9 @@ local KNOWN_CLASSES = {
     -- catalogue, the return desk...: eighteen subclasses of MachineActor_C).
     MembershipMachine_C       = "/Game/VideoStore/asset/prop/CheckOut/MembershipMachine.MembershipMachine_C",
     MachineActor_C            = "/Game/VideoStore/core/blueprint/MachineActor.MachineActor_C",
+    -- computer.lua: the office computer, and the market it sells from.
+    ComputerScreen_C          = "/Game/VideoStore/asset/prop/Computer/ComputerScreen.ComputerScreen_C",
+    Market_C                  = "/Game/VideoStore/core/blueprint/Market.Market_C",
     CheckOut_C                = "/Game/VideoStore/asset/prop/CheckOut/CheckOut.CheckOut_C",
     -- npcsync.lua: a guest's own AI Director, stopped.
     AI_Director_C             = "/Game/VideoStore/core/blueprint/AI_Director.AI_Director_C",
@@ -381,6 +459,17 @@ local classInfo    = {}  -- short name -> { path = "...", actor = bool }
 local classRetryAt = {}  -- short name -> when to try learning it again
 local classBackoff = {}  -- short name -> the wait after the next miss, seconds
 local LEARN_FIRST_WAIT, LEARN_MAX_WAIT = 5, 60
+-- Every try to learn a class is a walk of the whole object array (FindFirstOf),
+-- the operation the host crashed inside (see UE.staticFind). MEASURED: eight
+-- names in Config.ReplicatedClasses that this game does not have (AI_Character,
+-- Staff, Customer, Snack_Pack_4x ...) were walked for once a minute each, for
+-- good. Given up after this many tries, until the next world.
+local LEARN_GIVE_UP = 6
+local classMisses = {}   -- short name -> failed tries in this world
+-- A class that is not an actor (Shelve_Container_C is a StaticMeshComponent)
+-- can only be listed by walking, so it is walked this rarely.
+local COMPONENT_WALK_EVERY = 60
+local componentWalkAt = {}
 
 --- Climb from a class to the one called `short` - FindFirstOf matches
 --- subclasses (measured: Cartridge_Base_C hands back a videotape_C) - noting
@@ -457,7 +546,8 @@ local function classFor(short)
         return info
     end
     local wait = classBackoff[short] or LEARN_FIRST_WAIT
-    classRetryAt[short] = t + wait
+    classMisses[short] = (classMisses[short] or 0) + 1
+    classRetryAt[short] = (classMisses[short] >= LEARN_GIVE_UP) and math.huge or (t + wait)
     classBackoff[short] = math.min(wait * 2, LEARN_MAX_WAIT)
     return nil
 end
@@ -561,14 +651,20 @@ function UE.findAll(short)
         local gs, gi = engineRoute()
         local info = gs and classFor(short)
         if not gs or (info and not info.actor) then
-            stats.walks = stats.walks + 1
-            hit = FindAllOf(short) or false
+            local t = os.clock()
+            if not info or t >= (componentWalkAt[short] or 0) then
+                if info then componentWalkAt[short] = t + COMPONENT_WALK_EVERY end
+                stats.walks = stats.walks + 1
+                hit = FindAllOf(short) or false
+            end
         elseif info then
             local cls = classObject(info)
             if cls then
                 local out = {}
                 stats.lists = stats.lists + 1
+                if UE.trace then UE.trace("GetAllActorsOfClass", short) end
                 local called = pcall(function() gs:GetAllActorsOfClass(gi, cls, out) end)
+                if UE.trace then UE.trace("read list of", short) end
                 UE.releaseOut(out)
                 if called then
                     stats.listed = stats.listed + #out
@@ -611,6 +707,7 @@ function UE.findFirst(short)
             o = FindFirstOf(short)
         elseif info then
             local cls = classObject(info)
+            if UE.trace then UE.trace("GetActorOfClass", short) end
             if cls and not pcall(function() o = gs:GetActorOfClass(gi, cls) end) then
                 o = FindFirstOf(short)
             end
@@ -632,7 +729,7 @@ function UE.beginFrame()
         pcall(function() addr = gi:GetWorld():GetAddress() end)
         if addr ~= worldAddr then
             worldAddr = addr
-            classRetryAt, classBackoff = {}, {}
+            classRetryAt, classBackoff, classMisses, componentWalkAt = {}, {}, {}, {}
         end
     end
 end
@@ -646,7 +743,8 @@ end
 --- Tests only: forget everything this section learned.
 function UE._resetLookups()
     cache, roots = {}, {}
-    classInfo, classRetryAt, classBackoff = {}, {}, {}
+    classInfo, classRetryAt, classBackoff, classMisses, componentWalkAt = {}, {}, {}, {}, {}
+    forever, softRefs, softCount = {}, {}, 0
     giRetryAt, worldAddr, lastTickPc, frameOpen = 0, nil, nil, false
 end
 
@@ -711,6 +809,7 @@ local function engineControllers()
     local gs, gi = engineRoute()
     if not gs then return nil end
     local list, seen = {}, {}
+    if UE.trace then UE.trace("player controllers") end
     local ok = pcall(function()
         local n = gs:GetNumPlayerControllers(gi) or 0
         for i = 0, n - 1 do

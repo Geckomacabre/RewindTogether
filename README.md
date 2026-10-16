@@ -67,7 +67,7 @@ in the download) walks hosts and guests through every step.
 | Feature | What it means |
 |---|---|
 | 🏬 **One shared store** | The host's save is the store everyone plays in: shelves, stock, decorations, expansions and the sign, exactly as the host sees them. |
-| 🛒 **Guests work the store** | Pick up and shelve tapes, ring customers up at the till, use build mode and the paint tool, talk to the staff. Every action happens on the host's game, so all screens match. |
+| 🛒 **Guests work the store** | Pick up and shelve tapes, ring customers up at the till, order movies at the office computer, use build mode and the paint tool, talk to the staff. Every action happens on the host's game, so all screens match. |
 | 🌆 **The whole town matches** | Money, XP and level, the clock, the day, season and weather, the sky and street lights, every customer's looks and words, and the end-of-day summary. |
 | 💾 **Only the host saves** | A guest's own saves are never read or written. |
 | 🧩 **Mods from Nexus Mods** | Browse Retro Rewind's mods inside the launcher. **Download** takes one click on Nexus, and the launcher installs the file by itself. |
@@ -82,6 +82,11 @@ in the download) walks hosts and guests through every step.
 - Take a tape off a shelf and put it back, with the item and its details on the guest's own HUD.
 - **Ring customers up at the till:** the register's screen, the bill, the customer's cash and the
   change on the counter.
+- **Order at the office computer:** the store's desktop, the second-hand market (movies and
+  bundles, with their covers, ratings and prices), the new releases (with their free-standee
+  picture) and the Black Market search, on the guest's screen. **Buy** pays with the store's
+  money and the tapes arrive at the delivery spot for everyone. The Data page lists every movie
+  of a genre, the store's own copies first, with how often each was rented.
 - **Build mode:** pack furniture and place it, with the guest's own green/red placement preview.
 - **The paint (skin) tool:** colours for the carpet and the shelves.
 - **Talk to the staff member:** the conversation opens on the guest's screen and the guest
@@ -101,6 +106,8 @@ in the download) walks hosts and guests through every step.
 - **Shelf titles, the signs you wrote and the film posters.**
 - **The end of the day:** the host's summary, the XP bar and the level-up unlocks, then the
   new-day banner.
+- **Each other player:** a town character's look (clothes, colours, hair, face) picked by the
+  host, the same on every screen; walking when they walk; what they carry in their hands.
 
 </details>
 
@@ -177,13 +184,16 @@ have turned it on. A fresh install doesn't show one.)
 - **The host decides when the day ends.** Guests see the summary and follow into the next day;
   its buttons are the host's.
 - **Guests can't change a shelf's model** (the mesh tool). Colours (the paint tool) work.
-- **The office computer's ordering screens are empty on a guest's screen** (placeholder text and
-  prices). Ordering movies is the host's job for now.
+- **A new video game's banner picture doesn't show on a guest's office computer** (movies'
+  standee pictures do; the banner itself still comes with the order).
+- **A guest's Black Market buy counts for the host's Steam achievements,** the same as the host's
+  own buy there would.
 - **The mouse wheel doesn't switch tools for guests yet.** Use E, V and B.
 - **NPC clothes and colours match the host's,** but a customer can look slightly different for a
   moment when it first appears.
-- **Tested with two copies of the game on one PC.** Two players on two PCs over the internet,
-  and the Steam route in particular, still need real-world testing.
+- **Tested with up to three copies of the game on one PC**, also through a simulated bad
+  connection (300 ms, 5% packet loss), with guests leaving and rejoining. Real players on separate
+  PCs over the internet, and the Steam route in particular, still need real-world testing.
 
 ---
 

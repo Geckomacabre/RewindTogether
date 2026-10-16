@@ -1,5 +1,5 @@
 Rewind Together
-Version: 1.7.3
+Version: 1.7.4
 Built:   2026-10-15
 Game:    Retro Rewind (Steam AppID 3552140)
 Engine:  Unreal Engine 5.4
@@ -12,6 +12,78 @@ Unreal refuses mismatched builds.
 
 Check with:  rt.status   in the game's console (press ~ twice,
 type it, press Enter), or the launcher's Play tab.
+
+
+CHANGES IN 1.7.4  -  guests can order at the office computer,
+                     players that look and move like people,
+                     and steadier hosting with several guests.
+------------------------------------------------------
+  * NEW: every player looks like one of the town's characters
+    - clothes, colours, hair, beard or glasses, face - picked
+    by the host and the SAME on every screen. Before, a player
+    was a bald body in the plain default clothes (the "broken
+    shirts"), and each screen picked its own.
+
+  * FIXED: other players walk when they walk. Their body
+    stood idle (or walked frozen) because the borrowed
+    character animation only works out its speed for the
+    town's NPCs; the mod now feeds it the player's speed.
+
+  * NEW: what another player carries is in their hand (a
+    stack in the other hand), not floating beside their head.
+
+  * NEW: the office computer works for guests. Its desktop
+    (store name, store value, the date), the second-hand
+    market (movies and bundles, with their covers, tags,
+    ratings and prices) and the new releases now show on a
+    guest's screen too, and BUY works: the store's money
+    pays on the host, and the tapes arrive at the delivery
+    spot for everyone. Before, a guest saw placeholder text.
+
+  * NEW: the Black Market and the Data page on a guest's
+    office computer. Type a SKU and the host's computer
+    finds it - price, cover, genre mark-up - and BUY orders
+    it, as on the host (it can unlock a Steam achievement
+    on the host's account). The Data page lists every
+    movie of a researched genre, the store's own copies
+    first, with copies and times rented.
+
+  * NEW: a new release's free-standee picture shows on a
+    guest's computer (movies; a video game's banner picture
+    stays hidden).
+
+  * FIXED: the host could crash with two or more guests in
+    the store (twice in a three-player test, a few minutes
+    in, after a guest had left). The mod looked things up
+    in a way that walks every object in the game, several
+    times a second, and a walk that met something being
+    removed took the game down. Lookups now go straight to
+    the object - about a hundred times faster, too.
+
+  * IMPROVED: less memory creeps up over a long session. The
+    mod's lookups of game classes, many times a second, each
+    left a little memory behind; they now leave a third as
+    much (about 20 MB less per hour, host and guests).
+
+  * FIXED: something a guest was holding when they left the
+    session stayed floating in the air. It now drops to the
+    floor where they stood.
+
+  * FIXED: things thrown or dropped landed on the host's
+    floor but hung in mid-air on guests' screens. They now
+    land in the same place for everyone.
+
+  * FIXED: a guest's clicks on a machine's screen (the
+    computer, the catalogue) were also sent to the host as
+    clicks in the store.
+
+  * CHANGED: the "no other player's pawn ... replication
+    problem" warning no longer appears on every join and
+    leave, only when a player stays without a body.
+
+  * TESTED: a slow, lossy connection (300 ms, 5% packet
+    loss), joining late, leaving and rejoining, and three
+    players at once - the store matches on every screen.
 
 
 CHANGES IN 1.7.3  -  no more guests stranded outside the
