@@ -1,5 +1,5 @@
 Rewind Together
-Version: 1.9.3
+Version: 1.9.4
 Built:   2026-11-16
 Game:    Retro Rewind (Steam AppID 3552140), tested on Steam build
          26584658 (the Video Game Rental update and its 11 Nov patch)
@@ -16,6 +16,44 @@ type it, press Enter), or the launcher's Play tab.
 
 You need your own copy of Retro Rewind on Steam. Nothing from the
 game is included here: this is only the mod.
+
+
+CHANGES IN 1.9.4  -  machines, tapes and the till for guests.
+------------------------------------------------------
+  From a real session on 1.9.3 (a friend over the Steam relay),
+  each found again on two copies of the game through a simulated
+  internet connection (150 ms, 1% loss) before it was fixed.
+
+  * FIXED: leaving the popcorn machine put a guest in the wrong
+    place. A guest's game had no map of the store's floor (Unreal
+    builds it only on the host), so the game's own exit from any
+    machine glided the guest towards the middle of the map, and the
+    mod pulled them back to the machine's exit point - which for the
+    popcorn and slushie machines on the counter is 87 cm up in the
+    air. A guest's game now builds the floor map too, and every
+    machine (popcorn, slushie, cotton candy, return desk, computer,
+    catalogue, the till...) lets a guest out exactly where it lets
+    the host out. Measured: popcorn and till exits land on the spot.
+  * FIXED: tapes on a guest's screen ending up in the wrong place
+    and two tapes in one hand. A guest's own game also runs every
+    click, against shelves whose contents it never learns (only the
+    host knows which slot holds which tape), so it could put a tape
+    away that the host still had in the guest's hand - and the two
+    games disagreed from then on. A guest's game now checks the
+    host's tapes it has (or should have) in hand against the host's
+    own record, and puts any that are on the wrong person back where
+    the host has them, a moment after the host's answer to the click
+    has arrived. Things the guest's own game makes (the popcorn
+    shovel, the repair tools) and where on the guest a tape sits
+    (the hand, the stack, held up with F) are left alone.
+  * QUICKER: the mod handled the network ten times a second, so a
+    guest's scan at the till could wait up to three of those turns
+    on top of the internet. It now handles messages as they arrive.
+    (Measured: the guest's frames stay smooth at the till. The time
+    from a scan to the bill on a guest's screen with a real customer
+    was not measured.)
+  * FIXED: the till's new customer page on the host could make a
+    guest's till screen switch pages over and over.
 
 
 CHANGES IN 1.9.3  -  updated for the Video Game Rental update.

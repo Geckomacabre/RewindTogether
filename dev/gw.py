@@ -9,7 +9,15 @@ import os
 import subprocess
 import sys
 
-UM = os.path.expanduser(r"~\.claude\plugins\marketplaces\local-desktop-app-uploads\universal-modder")
+# The GitHub install (kept current by Claude Code's plugin auto-update) first;
+# an older desktop-app upload only if that is missing.
+UM = next((p for p in (
+    os.path.expanduser(r"~\.claude\plugins\marketplaces\universal-modder"),
+    os.path.expanduser(r"~\.claude\plugins\marketplaces\local-desktop-app-uploads\universal-modder"),
+) if os.path.isdir(os.path.join(p, "um"))), None)
+if UM is None:
+    raise SystemExit("universal-modder is not installed (Claude Code plugin from "
+                     "github.com/rehan-remade/universal-modder)")
 sys.path.insert(0, UM)
 from um import win  # noqa: E402
 

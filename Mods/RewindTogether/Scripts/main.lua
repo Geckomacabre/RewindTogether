@@ -47,6 +47,7 @@ local Overlay     = require("overlay")
 local Chat        = require("chat")
 local Sync        = require("sync")
 local Hud         = require("hud")
+local CarrySync   = require("carrysync")
 local World       = require("worldsync")
 local SkinSync    = require("skinsync")
 local NpcSync     = require("npcsync")
@@ -91,6 +92,7 @@ local bootTime       = os.clock()
 local autoJoinDone   = false
 
 local TICK_MS          = 100     -- 10 Hz driver; sub-systems rate-limit themselves
+local FAST_MS          = 33      -- the network pump between ticks (see start())
 local SWEEP_INTERVAL   = 0.5     -- seconds between replication slices (one class each): the whole list in ~14 s
 local ROSTER_INTERVAL  = 2.0
 local NAMETAG_INTERVAL = 0.25    -- 4 Hz is plenty and keeps FindAllOf off the hot path
@@ -499,6 +501,7 @@ local function tick()
 
     -- Guest-side: the money/clock HUD only a GameMode ever builds. hud.lua.
     phase("Hud.tick") Hud.tick(now)
+    phase("CarrySync.tickGuest") CarrySync.tickGuest(now)
 
     if UE.IsServer() then
         phase("World.tickHost") World.tickHost(now)
@@ -597,6 +600,27 @@ local function start()
     if Config.SafeMode then
         Log.warn("SafeMode is on: nametags and the in-game overlay are disabled.")
     end
+
+    -- A guest's own game gets the store's floor map. Unreal builds navigation
+    -- only on the server unless NavigationSystemV1.bAllowClientSideNavigation
+    -- is set, so on a guest every K2_ProjectPointToNavigation failed and the
+    -- game's own exits from a machine (MachineActor @4286, the till @7197)
+    -- glided the guest towards (0, 0, 100), the world origin, before the mod
+    -- pulled them back to the exit's raw point - 87 cm in the air for the
+    -- counter's popcorn and slushie machines (REPORTED 16 Nov 2026). With it
+    -- set before the store loads (here, at the main menu), the guest's game
+    -- builds its own (the store's RecastNavMesh is runtime-generated) and the
+    -- exits land where the host's do. MEASURED: a guest leaving the popcorn
+    -- machine stood at (1791, -1426, 92), the host's exit, nothing to correct.
+    -- Absent means on (Config.GuestNavigation = false turns it off).
+    if Config.GuestNavigation ~= false then
+        local nav = nil
+        pcall(function() nav = StaticFindObject("/Script/NavigationSystem.Default__NavigationSystemV1") end)
+        if UE.valid(nav) and UE.TryGet(nav, "bAllowClientSideNavigation") ~= true
+           and UE.TrySet(nav, "bAllowClientSideNavigation", true) then
+            Log.info("navigation: a guest's game builds the store's floor map too (machine exits land where the host's do)")
+        end
+    end
     Overlay.setEnabled(Config.ShowOverlay and not Config.SafeMode)
 
     Net.init(Config)
@@ -609,6 +633,7 @@ local function start()
     LocalGM.init(Config)
     Sync.init(Config)
     Hud.init(Config)
+    CarrySync.init(Config)
     World.init()
     SkinSync.init(Config)
     NpcSync.init(Config)
@@ -657,6 +682,24 @@ local function start()
     if type(LoopInGameThreadWithDelay) == "function"
        and pcall(LoopInGameThreadWithDelay, TICK_MS, function() body() return false end) then
         Log.info("tick loop: on the game thread (LoopInGameThreadWithDelay)")
+        -- The network between ticks: a guest's press reaches the host's
+        -- replay, and the host's answer the guest's screen, within ~33 ms
+        -- instead of waiting up to a tick on each side (three ticks per scan
+        -- at the till: ~300 ms on top of the internet). Only when something is
+        -- queued, or the till's burst is on; the same game thread, between
+        -- frames, as the tick.
+        local function fast()
+            if not (Chan.hasWork() or GuestInput.tillBurst()) then return end
+            UE.beginFrame()
+            local mode = UE.GetNetMode()
+            if mode == 2 or mode == 3 then
+                phase("Chan.pump (fast)") Chan.pump()
+                if UE.IsServer() then phase("GuestInput.fastHost") GuestInput.fastHost(os.clock()) end
+            end
+            UE.endFrame()
+            phase(Safety.IDLE)
+        end
+        pcall(LoopInGameThreadWithDelay, FAST_MS, function() Log.guard("fast net", fast) return false end)
     else
         LoopAsync(TICK_MS, function()
             ExecuteInGameThread(body)

@@ -454,6 +454,9 @@ end
 --- Host side: function(pc, code, loc, rot) for each guest action.
 function Chan.onAction(fn) actionHandler = fn end
 
+--- Is anything queued for pump()? (main.lua's fast loop: nothing to do, no work.)
+function Chan.hasWork() return #inbox > 0 or #actionInbox > 0 end
+
 --- Deliver everything the hooks queued. Game thread, from the mod's tick -
 --- never from inside a hook (see the note above dispatch()).
 function Chan.pump()

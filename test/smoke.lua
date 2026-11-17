@@ -100,12 +100,20 @@ check("read the declared ID type", logHas("declared as StructProperty"),
 -- -------------------------------------------------------- 4. boot the mod --
 
 print("\n-- booting main.lua (standalone, nothing in the world) --")
+-- Navigation's class default: a guest's game builds the floor map only with
+-- bAllowClientSideNavigation set before the store loads (main.lua start()).
+H.navCdo = H.obj("NavigationSystemV1", { __isActor = false, bAllowClientSideNavigation = false })
+H.staticObjects["/Script/NavigationSystem.Default__NavigationSystemV1"] = H.navCdo
 local ok, err = pcall(require, "main")
 check("main.lua loads and starts", ok, err)
 check("a tick loop was installed", #H.ticks == 1, #H.ticks)
+-- Two game-thread loops under 100 ms: the key poll, and the network pump
+-- between ticks (main.lua FAST_MS).
 check("keys are polled on the game thread, not UE4SS's keybind thread",
-      #H.polls == 1 and #H.keybinds == 0,
-      ("%d poll loop(s), %d RegisterKeyBind callback(s)"):format(#H.polls, #H.keybinds))
+      #H.polls == 2 and #H.keybinds == 0,
+      ("%d poll loop(s) (key poll + network pump), %d RegisterKeyBind callback(s)"):format(#H.polls, #H.keybinds))
+check("a guest's game is set to build the store's floor map (machine exits)",
+      H.navCdo.bAllowClientSideNavigation == true, tostring(H.navCdo.bAllowClientSideNavigation))
 check("console commands registered", H.commands["rt.help"] ~= nil)
 
 local ticked, terr = pcall(H.tick)
@@ -3264,6 +3272,25 @@ do
     check("after a guest's press at the till, the register's screen goes out on the next tick",
           waited and billSince(before), ("held to the half second: %s, sent after the press: %s")
               :format(tostring(waited), tostring(billSince(before))))
+    -- ...and between ticks (main.lua's fast loop): a scan's bill does not
+    -- wait for the next 10 Hz tick (REPORTED 16 Nov 2026, "super slow").
+    hostW["txt_Member-name_checkoutpage"] = textBlock("Katherine Johnson")
+    local function namedSince(n, name)
+        for i = n + 1, #sentStrings do
+            if sentStrings[i]:find("RT1|bill", 1, true) and sentStrings[i]:find(name, 1, true) then return true end
+        end
+        return false
+    end
+    before = #sentStrings
+    GuestInput3.fastHost(t)
+    local fastSent = namedSince(before, "Katherine Johnson")
+    t = t + 60                        -- long after the burst
+    hostW["txt_Member-name_checkoutpage"] = textBlock("Dorothy Vaughan")
+    before = #sentStrings
+    GuestInput3.fastHost(t)
+    local idleSent = namedSince(before, "Dorothy Vaughan")
+    check("in the burst after a press, the fast loop sends the screen between ticks - and only then",
+          fastSent and not idleSent, ("in the burst: %s, after it: %s"):format(tostring(fastSent), tostring(idleSent)))
     os.clock = clockWas
 end
 
@@ -3344,6 +3371,26 @@ H.hooks["/Script/Engine.PlayerController:ClientMessage"](rpcGuestPC, billMsg or 
 Chan.pump()
 check("the same bill again changes nothing", #calls == before and refreshed == 1,
       ("%d new call(s)"):format(#calls - before))
+-- Game build 26584658: the host's screen on its new customer page (switcher
+-- index 3 = page 6). Replayed as page 3 it selected nothing and was switched
+-- again on every update; only pages 0-2 are mirrored.
+do
+    local P2Pm = require("steamp2p")
+    local _, f = P2Pm.decode(billMsg or "")
+    f = f or {}
+    f.g = "3"
+    local switched = 0
+    local realSwitch = guestW["Switch Widget Page"]
+    guestW["Switch Widget Page"] = function(self, p) switched = switched + 1 return realSwitch(self, p) end
+    H.hooks["/Script/Engine.PlayerController:ClientMessage"](rpcGuestPC, P2Pm.encode("bill", f))
+    Chan.pump()
+    H.hooks["/Script/Engine.PlayerController:ClientMessage"](rpcGuestPC, P2Pm.encode("bill", f))
+    Chan.pump()
+    check("the host's customer page (switcher index 3) is not replayed as a page on the guest",
+          switched == 0 and guestSwitcher.ActiveWidgetIndex == 1,
+          ("switched %d time(s), page %s"):format(switched, tostring(guestSwitcher.ActiveWidgetIndex)))
+    guestW["Switch Widget Page"] = realSwitch
+end
 
 H.theWorld.NetDriver.ServerConnection = nil
 H.world.objects["MembershipMachine_C"] = savedTills
@@ -6537,6 +6584,124 @@ check("the host's machine animations play on the guest's own copy of that machin
 UE.findAll = realFindAll
 H.theWorld.NetDriver.ServerConnection = nil
 World.reset()
+UE.beginFrame()
+end)()
+
+-- ------------------------------------------- carrying: the host's truth --
+-- MEASURED (16 Nov 2026, 150 ms lag): a guest's left click on a slot that is
+-- full on the host stored the tape in the guest's own game (its slots are all
+-- empty there) while the host still had it in the guest's hand. carrysync.lua
+-- puts it back where the host's replicated record has it.
+;(function()
+print("\n-- carrying: a tape the guest's own game put away, still in hand on the host --")
+local CarrySync = require("carrysync")
+CarrySync.reset()
+local function fname(s) return { ToString = function() return s end } end
+local handSocket = H.obj("SceneComponent", { __isActor = false, children = {},
+    GetFName = function() return fname("AttachObject Socket") end,
+    GetNumChildrenComponents = function(self) return #self.children end,
+    GetChildComponent = function(self, i) return self.children[i + 1] end })
+local me = H.obj("Player_Character_C", { ["AttachObject Socket"] = handSocket,
+    GetFName = function() return fname("Player_Character_C_7") end })
+handSocket.GetOwner = function() return me end
+local attachedTo = nil
+local root = H.obj("SceneComponent", { __isActor = false, RelativeLocation = { X = -68.5, Y = 21, Z = 8 },
+    GetAttachParent = function() return attachedTo end,
+    K2_SetRelativeLocationAndRotation = function(self, loc) self.RelativeLocation = { X = loc.X, Y = loc.Y, Z = loc.Z } end })
+local tape = H.obj("videotape_C", { RootComponent = root, Role = 1,       -- 1: the guest's copy of the host's tape
+    K2_GetActorLocation = function() return { X = 787, Y = -1232, Z = 152 } end,
+    GetFName = function() return fname("videotape_C_42") end,
+    GetFullName = function() return "videotape_C /Game/Store.Store:PersistentLevel.videotape_C_42" end,
+    AttachmentReplication = { AttachParent = me, AttachComponent = handSocket, AttachSocket = fname("None"),
+                              LocationOffset = { X = -68.5, Y = 21, Z = 8 },
+                              RotationOffset = { Pitch = 2.5, Yaw = 135, Roll = 345.5 } } })
+root.GetOwner = function() return tape end
+local attaches = 0
+tape.K2_AttachToComponent = function(_, comp)
+    attaches = attaches + 1
+    attachedTo = comp
+    handSocket.children = { root }
+end
+local slot = H.obj("Shelve_Container_C", { __isActor = false })
+local function arrayOf(list) return { ForEach = function(_, fn) for i, v in ipairs(list) do fn(i, { get = function() return v end }) end end } end
+local shelf = H.obj("Shelf_Movie_6Row_02_C", { ["All Selve Containers"] = arrayOf({ slot }),
+    K2_GetActorLocation = function() return { X = 780, Y = -1232, Z = 0 } end })
+local savedPawn = hostPC.Pawn
+hostPC.Pawn = me
+local realFindAll, realFindObject = UE.findAll, UE.findObject
+UE.findAll = function(short)
+    if short == "Shelve_Container_C" then error("listing every slot walks every object (1.9.2: 155 ms)") end
+    if short == "Shelve_C" then return { shelf } end
+    return realFindAll(short)
+end
+UE.findObject = function(path) if path and path:find("videotape_C_42", 1, true) then return tape end return realFindObject(path) end
+H.theWorld.NetDriver.ServerConnection = H.obj("NetConnection", { __isActor = false })
+UE._resetLookups()                                -- forget the single-player net mode an earlier tick cached
+local realClock = os.clock
+local t0 = realClock()
+os.clock = function() return t0 end
+
+-- In hand on both: nothing to do. (One clock, as in the game: the tick's
+-- "now" is os.clock(), and so is the press time.)
+local function at(dt) os.clock = function() return t0 + dt end return t0 + dt end
+attachedTo = handSocket
+handSocket.children = { root }
+UE.beginFrame()
+CarrySync.tickGuest(at(0))
+CarrySync.tickGuest(at(0.3))
+check("a tape in hand here and on the host is left alone", attaches == 0, ("%d re-attach(es)"):format(attaches))
+
+-- The guest's own game stores it: loose here, in the (local) slot; on the host still in hand.
+attachedTo = nil
+handSocket.children = {}
+slot["Object owning of this container"] = tape
+at(1.0)
+CarrySync.pressed()                               -- the click that did it, just now
+UE.beginFrame()
+CarrySync.tickGuest(at(1.3))
+CarrySync.tickGuest(at(1.6))
+check("not corrected while the host's answer to the press can still be on its way",
+      attaches == 0, ("%d re-attach(es)"):format(attaches))
+CarrySync.tickGuest(at(2.5))                      -- the host has answered by now (1.2 s)
+check("a tape this game put away while the host still has it in hand goes back to the hand",
+      attaches == 1 and attachedTo == handSocket, ("%d re-attach(es)"):format(attaches))
+check("and this game's slot forgets it (found through its shelf, not a walk of every slot)",
+      slot["Object owning of this container"] == nil, tostring(slot["Object owning of this container"]))
+
+-- Held up to look at (F): another socket of this guest, the host's record
+-- still the hand. Whose it is agrees - where on the guest is this game's own.
+local inspector = H.obj("SceneComponent", { __isActor = false, GetFName = function() return fname("Inspector Object Socket") end })
+inspector.GetOwner = function() return me end
+attachedTo = inspector
+handSocket.children = {}
+CarrySync.tickGuest(at(3.0))
+CarrySync.tickGuest(at(3.3))
+CarrySync.tickGuest(at(3.6))
+check("a tape held up to inspect (F) is left where this game put it", attaches == 1 and attachedTo == inspector,
+      ("%d re-attach(es)"):format(attaches))
+
+-- What this game spawned itself (the popcorn shovel): Authority here, no host
+-- record - never touched, even with no press for a long time.
+local shovelRoot = H.obj("SceneComponent", { __isActor = false, GetAttachParent = function() return handSocket end })
+local shovel = H.obj("Popcorn-Shovel_C", { RootComponent = shovelRoot, Role = 3,
+    GetFName = function() return fname("Popcorn-Shovel_C_1") end,
+    GetFullName = function() return "Popcorn-Shovel_C /Game/Store.Store:PersistentLevel.Popcorn-Shovel_C_1" end,
+    AttachmentReplication = { },
+    K2_AttachToComponent = function() attaches = attaches + 100 end,
+    K2_DetachFromActor = function() attaches = attaches + 1000 end })
+shovelRoot.GetOwner = function() return shovel end
+handSocket.children = { shovelRoot }
+CarrySync.tickGuest(at(10))
+CarrySync.tickGuest(at(10.3))
+CarrySync.tickGuest(at(10.6))
+check("what this game spawned itself (the popcorn shovel) is never touched", attaches == 1,
+      ("%d move(s)"):format(attaches))
+
+os.clock = realClock
+UE.findAll, UE.findObject = realFindAll, realFindObject
+hostPC.Pawn = savedPawn
+H.theWorld.NetDriver.ServerConnection = nil
+CarrySync.reset()
 UE.beginFrame()
 end)()
 

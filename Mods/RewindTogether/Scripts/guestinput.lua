@@ -258,6 +258,8 @@ local function onPress(code)
     end)
     if not (loc and rot) then return end
     lastLocalPress = os.clock()
+    -- carrysync.lua waits for the host's answer to this before correcting hands.
+    require("carrysync").pressed()
     if Chan.sendAction(code, loc, rot) > 0 then
         stats.sent = stats.sent + 1
         Log.debug("sent %s to the host", ACTIONS[code].label)
@@ -429,6 +431,20 @@ function GuestInput.tickHost()
     sendBill(now)
     Log.guard("machines (host)", require("machines").tickHost, now)
 end
+
+--- Host, from main.lua's fast loop: in the seconds after a guest's press at
+--- the till, the drawer and the register's screen go out as soon as they
+--- change, not on the next 10 Hz tick. REPORTED (16 Nov 2026, a friend over
+--- the Steam relay): scanning at the till "super slow and choppy" - each scan
+--- waited for a tick here, then for one on the guest, on top of the internet.
+function GuestInput.fastHost(now)
+    if not UE.IsServer() or now >= tillBurstUntil then return end
+    sendDrawer(now)
+    sendBill(now)
+end
+
+--- Is the till's burst on (main.lua: worth a fast pass even with nothing queued)?
+function GuestInput.tillBurst() return os.clock() < tillBurstUntil end
 
 --- Guest: the host says which tool this player's pawn holds there. Not in
 --- the second after a press of our own: that answer may predate it.
@@ -1305,7 +1321,15 @@ local function onBill(fields)
         changed = true
     end
     -- After the lines: adding one switches to the bill's page itself.
+    -- "g" is the host's switcher INDEX; "Switch Widget Page" takes a page
+    -- (Membership_Machine_Widget). Index and page are the same only for the
+    -- desktop, the bill and the screensaver (0-2). Game build 26584658 added
+    -- pages whose index differs (page 6, the customer -> index 3; page 5, the
+    -- ban list) and are drawn from the host's records: replaying index 3 as
+    -- page 3 selected nothing, never matched, and was switched again on every
+    -- update (each switch also re-arms the screen's capture refresh).
     local page = tonumber(fields.g)
+    if page and (page < 0 or page > 2) then page = nil end
     local switcher = UE.TryGet(w, "WidgetSwitcher")
     if page and tonumber(UE.TryGet(switcher, "ActiveWidgetIndex")) ~= page then
         UE.TryCall(w, "Switch Widget Page", page)

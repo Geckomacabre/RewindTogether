@@ -408,6 +408,38 @@ The rented-out tapes the host hides at the origin are the host's extra Cartridge
 Not done for guests yet: the till's profile/ban screen (host data only), the Tech Shed
 (ElectronicsStore_C, Electronics-GameDisplay_C - untested with a guest).
 
+1.9.4 (16 Nov 2026, from a real Steam-relay session on 1.9.3; each reproduced on two copies through
+`dev/netsim.py --lag 150 --jitter 25 --loss 1` before it was fixed):
+- **Machine exits.** A guest's game had no navigation system at all (Unreal builds one on clients only
+  with `NavigationSystemV1.bAllowClientSideNavigation`), so every `K2_ProjectPointToNavigation` in a
+  machine's exit failed and the guest glided towards (0, 0, 100); guestinput.lua's after-the-fact
+  "put back at its exit" used the raw exit point - 87 cm up for the counter's popcorn and slushie
+  machines. main.lua sets the flag on the CDO at boot (before any store loads); the store's
+  RecastNavMesh is runtime-generated, so the guest builds its own. Measured: exits land where the
+  host's do (popcorn 1791,-1426,92; till 1720,-1486,92), no corrections logged, guest frames unchanged
+  (median 15 ms, worst 37 ms).
+- **Carrying.** A guest's click runs twice: replayed on the host, and in the guest's own game, whose
+  shelf slots are all empty ("Object owning of this container" never replicates). Measured: the
+  guest's own left click on a slot full on the host stored the tape locally while the host still
+  had it in the guest's hand; nothing on the host changed, so nothing ever corrected it.
+  carrysync.lua compares what the guest's game has on its hand sockets (and what it had lately)
+  with each actor's replicated `AttachmentReplication`, and after the host's answer to the last press
+  can have arrived (0.8 s) re-attaches it as the host has it (or detaches it to `ReplicatedMovement`),
+  clears the local slot's reference, and empties a stale local "Objects Inventory". Measured live: the
+  local-only store is put back in the hand within a second; a whole grab-two/put-back run ends with all
+  396 tapes in the same place. "Add object to Hand" is identical before and after the update: stacking
+  is not new.
+- **Latency.** The network was handled only in the 10 Hz tick (a scan waited up to three ticks); main.lua
+  runs a 33 ms game-thread pump (`Chan.hasWork()`, and `GuestInput.fastHost` during the till's burst).
+- **Till pages.** "Switch Widget Page" takes Membership_Machine_Widget, mapped to switcher indices
+  0->0, 1->1, 2->2, 5->5, 6->3 (3 and 4: none). The mirror sent the index; only 0-2 are replayed now.
+- Not reproduced: a tape thrown because the host's replayed trace hit a customer the guest's screen did
+  not show (the game throws whatever is held when a left click hits neither a slot nor a pickup) - the
+  test store had no customers walking. If tapes still land on the floor, test with the store open.
+- Rig traps: a shelf's front is +X here although GetActorForwardVector says -Y (aim at slot anchor +15 cm
+  from 100 cm in front); someone clicking in the guest's window sends real presses; two coop_test runs
+  at once collide ("Could not host: unknown error").
+
 Test-rig gotcha (cost a guest crash, 16 Nov 2026): a bridge `lua` command that calls a method on
 a component read from a property (`c:GetFName()` on "ref Componant Look At") crashes the game when
 the reference is empty - UE4SS hands back a wrapper around null. Guard with `UE.valid` and pcall,
