@@ -234,6 +234,10 @@ local function onPress(code)
     -- popcorn machine and the rest every click is the pawn's own trace, and
     -- those machines' contents are on the host (machines.lua).
     if GuestInput.atScreenMachine() then return end
+    -- The till's own customer profile screen (game build 26584658): the
+    -- mouse is on this game's copy of it, like a screen machine's. Clicks
+    -- only: leaving the till (7, sent from tickGuest) must still reach the host.
+    if (code == 1 or code == 2) and GuestInput.tillScreenOpen() then return end
     local pc = UE.GetPlayerController()
     if not UE.alive(pc) or not UE.valid(UE.GetPawn()) then return end
     -- A click on a screen machine opens this game's own copy (see
@@ -740,9 +744,41 @@ end
 local CLICK_THROUGH = { ConsoleRental_Mat_C = true, MembershipMachine_C = true, CheckOut_C = true }
 local screenSkipped = 0
 
+--[[
+    THE TILL'S CUSTOMER BUTTON (game build 26584658, the Video Game Rental
+    update). Membership_Button-Trigger_C, a child actor on the register, is
+    clicked like a pickup; its Pickup broadcasts to MembershipMachine
+    "Membership Button - Click Event" (bp nov11 MembershipMachine @0-@86): out
+    of checkout mode it is the register's own Interaction (harmless in a
+    replay - see the till, above), but IN checkout mode it sets "Player is in
+    UI mode" and runs "Animation of Moving player to the Membership UI
+    Screen" (@10989), whose timeline moves GetPlayerPawn(0) with collision
+    and walking off - on the host, the HOST, as the old glide would have. So
+    from checkout mode a click on it is the guest's own game's: its own till
+    copy opens the profile screen on the guest's screen.
+]]
+local TILL_BUTTON = "Membership_Button-Trigger_C"
+
 local function screenMachine(o)
-    return UE.alive(o) and UE.TryGet(o, "Hide Cursor Interface while Using") == true
-       and not CLICK_THROUGH[UE.ClassNameOf(o) or ""]
+    if not UE.alive(o) then return false end
+    local cls = UE.ClassNameOf(o) or ""
+    if cls == TILL_BUTTON then
+        local m = tillMachine()
+        return m ~= nil and UE.TryGet(m, "Player In Checkout Mode") == true
+    end
+    return UE.TryGet(o, "Hide Cursor Interface while Using") == true and not CLICK_THROUGH[cls]
+end
+
+--- Guest: its own register is showing the customer profile screen (the
+--- mouse works that screen, here - nothing of it is the host's to replay).
+--- Only the end of the screen's own exit glide clears that flag (bp nov11
+--- MembershipMachine @15217): a guest taken off the till another way (the
+--- end of the day, "Back to the store") would keep it, so checkout mode is
+--- required too, and tickGuest clears it when the guest leaves the till.
+function GuestInput.tillScreenOpen()
+    local m = tillMachine()
+    return m ~= nil and UE.TryGet(m, "Player is in UI mode") == true
+       and UE.TryGet(m, "Player In Checkout Mode") == true
 end
 GuestInput._screenMachine = screenMachine      -- onPress, above
 
@@ -1770,6 +1806,8 @@ function GuestInput.tickGuest()
     local m = tillMachine()
     local on = m ~= nil and UE.TryGet(m, "Player In Checkout Mode") == true
     if tillWasOn and not on then
+        -- Off the till however it happened: its profile screen is shut too.
+        if m and UE.TryGet(m, "Player is in UI mode") == true then UE.TrySet(m, "Player is in UI mode", false) end
         onPress(7)
         local spot = nil
         pcall(function() spot = UE.vec(UE.TryGet(m, "PlayerLocation"):K2_GetComponentLocation()) end)

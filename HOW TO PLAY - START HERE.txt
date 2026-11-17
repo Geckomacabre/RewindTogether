@@ -1,5 +1,5 @@
 =============================================================
-  REWIND TOGETHER  -  play Retro Rewind together   (v1.9.2)
+  REWIND TOGETHER  -  play Retro Rewind together   (v1.9.3)
   The simple guide. Read your part: HOST or GUEST.
 =============================================================
 
@@ -10,7 +10,9 @@
 BEFORE YOU START  (both of you)
 -------------------------------
 
-  [ ] You both own Retro Rewind on Steam.
+  [ ] You both own Retro Rewind on Steam - each player needs
+      their own copy. This download is only the mod: nothing
+      from the game is in it.
   [ ] You are Steam friends with each other.
   [ ] You both have the SAME zip of Rewind Together.
   [ ] Steam has finished updating Retro Rewind for both of you.
@@ -190,8 +192,13 @@ IF IT DOES NOT WORK
 
   Anything else
     In the launcher: DIAGNOSTICS > "Copy diagnostics".
-    Paste that to whoever sent you the mod. If you can, do it
-    on BOTH PCs (host and guest).
+    Paste that into a bug report or on the Discord (links
+    below). If you can, do it on BOTH PCs (host and guest).
+
+    Discord ...... https://discord.gg/C7gE5SHEzH
+    Bug reports .. https://github.com/Geckomacabre/RewindTogether/issues
+    Downloads .... https://github.com/Geckomacabre/RewindTogether/releases
+    The launcher's footer has Discord and GitHub buttons too.
 
 
   The Extras folder is only for playing without Steam (opening

@@ -2739,6 +2739,76 @@ local told = nil
 for i = sentBefore + 1, #sentStrings do if sentStrings[i]:find("RT1|me", 1, true) then told = sentStrings[i] end end
 check("and the guest's own game is told to follow", told ~= nil and told:find("till=1", 1, true) ~= nil, tostring(told))
 
+-- The till's customer button (game build 26584658). From checkout mode its
+-- click runs "Animation of Moving player to the Membership UI Screen", whose
+-- timeline moves GetPlayerPawn(0) - on the host, the host. Not replayed.
+do
+    local button = H.spawn("Membership_Button-Trigger_C", {
+        K2_GetActorLocation = function() return { X = 1650, Y = -1550, Z = 100 } end })
+    local savedTest = seller["Look At Test"]
+    local savedPress = seller["InpActEvt_Input_Main-Trigger_K2Node_EnhancedInputActionEvent_20"]
+    local presses = 0
+    seller["Look At Test"] = function(self) self["ref Object Look At"] = button end
+    seller["InpActEvt_Input_Main-Trigger_K2Node_EnhancedInputActionEvent_20"] = function() presses = presses + 1 end
+    UE.beginFrame()
+    later()
+    upHook(rpcGuestPC, { X = 1600, Y = -1550, Z = 150 }, UE.rotArg({ Pitch = -20, Yaw = 0, Roll = 101 }))
+    Chan.pump()
+    check("from checkout mode, a guest's click on the till's customer button is not replayed on the host",
+          presses == 0 and till["Player In Checkout Mode"] == true,
+          ("presses %d, checkout %s"):format(presses, tostring(till["Player In Checkout Mode"])))
+    seller["Look At Test"] = savedTest
+    seller["InpActEvt_Input_Main-Trigger_K2Node_EnhancedInputActionEvent_20"] = savedPress
+    seller["ref Object Look At"] = nil
+    for i, o in ipairs(H.world.objects["Membership_Button-Trigger_C"] or {}) do
+        if o == button then table.remove(H.world.objects["Membership_Button-Trigger_C"], i) break end
+    end
+end
+
+-- The guest's own till showing its profile screen: its clicks stay there,
+-- but leaving the till (action 7, sent from tickGuest) must still go out, and
+-- the flag (cleared only by the screen's own exit glide) is cleared with it.
+do
+    local gTill = H.obj("MembershipMachine_C", { ["Player In Checkout Mode"] = true, ["Player is in UI mode"] = true })
+    local savedTills = H.world.objects["MembershipMachine_C"]
+    H.world.objects["MembershipMachine_C"] = { gTill }
+    local Chan2 = require("rpcchan")
+    local savedSend = Chan2.sendAction
+    local codes = {}
+    Chan2.sendAction = function(code) codes[#codes + 1] = code return 1 end
+    local savedPawn, savedCam = hostPC.Pawn, hostPC.PlayerCameraManager
+    hostPC.Pawn = H.obj("Player_Character_C", { GetAddress = function() return 0x7d00 end })
+    hostPC.PlayerCameraManager = H.obj("PlayerCameraManager", { __isActor = false,
+        GetAddress = function() return 0x7e00 end,
+        GetCameraLocation = function() return { X = 1718, Y = -1486, Z = 150 } end,
+        GetCameraRotation = function() return { Pitch = -20, Yaw = -127, Roll = 0 } end })
+    UE._resetLookups()
+    H.theWorld.NetDriver.ServerConnection = H.obj("NetConnection", { __isActor = false })
+    UE.beginFrame()
+    check("a guest's own till shows its profile screen only while it is at the till",
+          GuestInput2.tillScreenOpen() == true, tostring(GuestInput2.tillScreenOpen()))
+    GuestInput2._onPress(1)
+    check("a click on that screen is not sent to the host", #codes == 0, table.concat(codes, ","))
+    GuestInput2.tickGuest()                       -- notes it is at the till
+    gTill["Player In Checkout Mode"] = false      -- taken off it, the screen flag left on
+    UE.beginFrame()
+    GuestInput2.tickGuest()
+    local sent7 = false
+    for _, c in ipairs(codes) do if c == 7 then sent7 = true end end
+    check("leaving the till from that screen still tells the host, and shuts the screen",
+          sent7 and gTill["Player is in UI mode"] == false and GuestInput2.tillScreenOpen() == false,
+          ("codes %s, ui %s"):format(table.concat(codes, ","), tostring(gTill["Player is in UI mode"])))
+    gTill["Player is in UI mode"] = true          -- stale flag, not at the till
+    check("a stale profile-screen flag away from the till does not swallow clicks",
+          GuestInput2.tillScreenOpen() == false, tostring(GuestInput2.tillScreenOpen()))
+    Chan2.sendAction = savedSend
+    hostPC.Pawn, hostPC.PlayerCameraManager = savedPawn, savedCam
+    H.world.objects["MembershipMachine_C"] = savedTills
+    H.theWorld.NetDriver.ServerConnection = nil
+    UE._resetLookups()
+    UE.beginFrame()
+end
+
 -- The cash drawer: on the host it slid open, on a guest it stayed shut.
 local hostCo = H.spawn("CheckOut_C", { ["Checkout Draw is open"] = true, ["User can close the Cash Drawer"] = false,
     ["Actual Payback"] = 0, ["Money receive"] = 2500, ["Money to Payback"] = 400, ["Total of bill"] = 2100 })
@@ -3061,7 +3131,9 @@ local function poster(x, y, z, sku, yaw)
     local o = H.spawn("PosterFrame_C", { ["Specific SKU"] = sku, applied = {},
         K2_GetActorLocation = function() return { X = x, Y = y, Z = z } end,
         K2_GetActorRotation = function() return { pitch = 0, Yaw = yaw, Roll = 0 } end })
-    o["Apply Material for Film based on SKU"] = function(self, force)
+    -- Game build 26584658 (the Video Game Rental update) renamed it from
+    -- "Apply Material for Film based on SKU".
+    o["Apply Material based on SKU"] = function(self, force)
         self.applied[#self.applied + 1] = ("%d %s"):format(self["Specific SKU"], tostring(force))
     end
     return o
@@ -3091,7 +3163,7 @@ UE.beginFrame()
 H.hooks["/Script/Engine.PlayerController:ClientMessage"](rpcGuestPC, postersMsg or "")
 Chan.pump()
 SkinSync.tickGuest(9000)
-check("a guest's poster shows the host's film, drawn by its own Apply Material for Film",
+check("a guest's poster shows the host's film, drawn by its own Apply Material based on SKU",
       gp["Specific SKU"] == 41207 and gp.applied[1] == "41207 false", table.concat(gp.applied, ", "))
 SkinSync.tickGuest(9020)
 check("and is left alone while it shows it", #gp.applied == 1, ("%d apply(s)"):format(#gp.applied))
@@ -3583,7 +3655,8 @@ local function summaryWidget()
         AddToViewport = function() inVp = true end,
         IsInViewport = function() return inVp end,
         ["Close Animation and auto-destroy"] = function(self) self.closed = true inVp = false end })
-    for _, b in ipairs({ "UX_Button_NewDay", "UX_Button_Base", "Button_115" }) do
+    -- Game build 26584658: UX_Button_Base became UX_Button_ContinueToStats.
+    for _, b in ipairs({ "UX_Button_NewDay", "UX_Button_ContinueToStats", "Button_115" }) do
         w[b] = H.obj("UX_Button_Base_C", { __isActor = false, SetIsEnabled = function(self, e) self.enabled = e end })
     end
     return w
@@ -3630,7 +3703,7 @@ check("a guest gets the host's summary on screen, filled in through the panels' 
 check("what the host's summary hides is hidden here too (\"LEVEL UP!\" when nobody levelled up)",
       mine ~= nil and mine.txt_LevelUp.Visibility == 1, mine and tostring(mine.txt_LevelUp.Visibility) or "no widget")
 check("with its buttons greyed out: the next day is the host's to start",
-      mine ~= nil and mine.UX_Button_NewDay.enabled == false and mine.UX_Button_Base.enabled == false,
+      mine ~= nil and mine.UX_Button_NewDay.enabled == false and mine.UX_Button_ContinueToStats.enabled == false,
       mine and tostring(mine.UX_Button_NewDay.enabled) or "no widget")
 local box = mine and mine.HorizontalBox_LevelUpUnlock
 local u1, u2 = box and box.items[1], box and box.items[2]
@@ -6054,6 +6127,8 @@ local function fakeMap(t) return { ForEach = function(_, fn) for k, v in pairs(t
 gm["Actor Gatherer"] = H.obj("Actor_Gatherer_C", { __isActor = false,
     ["Research System"] = H.obj("Unlockable_System_C", { __isActor = false,
         ["Movie Genres Unlock"] = { 3, 7, GetArrayNum = function() return 2 end },
+        -- Game build 26584658: the video-game genres get Data buttons too.
+        ["Video Game Genres Unlock"] = { 2, 5, GetArrayNum = function() return 2 end },
         ["Adult Genre Request Enable"] = true }),
     ["Cartridge SKU Count Map"] = fakeMap({ [4121823] = 2 }),
     RentSystem = H.obj("RentSystem_C", { __isActor = false, ["Cartridge SKU Times Rented"] = fakeMap({ [4121823] = 5 }) }) })
@@ -6062,6 +6137,8 @@ local dp = sent.cdata or {}
 check("the Data page's genres, copies and rentals go to a guest at the computer",
       dp.g == "3,7,16" and dp.o == "4121823:2" and dp.r == "4121823:5",
       ("genres %s, owned %s, rented %s"):format(tostring(dp.g), tostring(dp.o), tostring(dp.r)))
+check("and the video-game genres the store has researched",
+      dp.v == "2,5", ("video-game genres %s"):format(tostring(dp.v)))
 gm["Actor Gatherer"] = nil
 check("a new release's standee picture is the thumbnail named after its SKU (movies only)",
       Computer._standeePath(true, "19759") == "/Game/VideoStore/asset/prop/Standees/Thumbnail/"

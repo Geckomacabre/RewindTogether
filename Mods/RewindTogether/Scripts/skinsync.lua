@@ -549,12 +549,15 @@ local function dressSign(a, val, first)
     return true
 end
 
---- A poster: the host's film, drawn by its own Apply Material for Film based
---- on SKU (the picture loads asynchronously, the title follows it).
+--- A poster: the host's film, drawn by its own Apply Material based on SKU
+--- (the picture loads asynchronously, the title follows it). The Video Game
+--- Rental update (game build 26584658) renamed it from "Apply Material for
+--- Film based on SKU"; the old name is tried for older builds.
 local function dressPoster(a, val, first)
     if not first and posterState(a) == val then return true end
     if not UE.TrySet(a, "Specific SKU", tonumber(val)) then return false end
-    if not UE.TryCall(a, "Apply Material for Film based on SKU", false) then return false end
+    if not (UE.TryCall(a, "Apply Material based on SKU", false)
+            or UE.TryCall(a, "Apply Material for Film based on SKU", false)) then return false end
     stats.titlesApplied = stats.titlesApplied + 1
     return true
 end

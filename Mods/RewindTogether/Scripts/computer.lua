@@ -435,8 +435,18 @@ local function dataPayload()
         end)
         if UE.TryGet(research, "Adult Genre Request Enable") == true and not have[16] then genres[#genres + 1] = "16" end
     end
+    -- The video-game genres (game build 26584658): their buttons follow the
+    -- movies' (Generate Data Movie Genre Button @1026-@1549).
+    local games, haveGame = {}, {}
+    if UE.valid(research) then
+        eachOf(UE.TryGet(research, "Video Game Genres Unlock"), function(_, e)
+            local n = tonumber(e)
+            if n and not haveGame[n] then haveGame[n] = true games[#games + 1] = tostring(n) end
+        end)
+    end
     local rent = UE.TryGet(g, "RentSystem")
-    return { g = table.concat(genres, ","), o = countsOf(UE.TryGet(g, "Cartridge SKU Count Map")),
+    return { g = table.concat(genres, ","), v = table.concat(games, ","),
+             o = countsOf(UE.TryGet(g, "Cartridge SKU Count Map")),
              r = UE.valid(rent) and countsOf(UE.TryGet(rent, "Cartridge SKU Times Rented")) or "" }
 end
 
@@ -890,7 +900,17 @@ local function fillGenres(w)
         if b then
             UE.TrySet(b, "Genre", tonumber(g))
             pcall(function() box:AddChild(b) end)
-            genreButtons[addressOf(b) or 0] = tonumber(g)
+            genreButtons[addressOf(b) or 0] = { g = tonumber(g), v = 0 }
+        end
+    end
+    -- Video-game genres: Genre 0 and the game genre, as the game's own
+    -- buttons are made (Generate A Data reads the game tables for Genre 0).
+    for v in (pages.data.v or ""):gmatch("%d+") do
+        local b = makeCard(w, CLASS.genre)
+        if b then
+            UE.TrySet(b, "Video Game Genre", tonumber(v))
+            pcall(function() box:AddChild(b) end)
+            genreButtons[addressOf(b) or 0] = { g = 0, v = tonumber(v) }
         end
     end
 end
@@ -907,7 +927,9 @@ local function openGenre(w, addr)
         pcall(function() b = box:GetChildAt(i) end)
         if UE.valid(b) and addressOf(b) == addr then
             pcall(function() w["Button Movie Genre Data - Click Event"](w, b) end)
-            rowsJob = { genre = genreButtons[addr], id = 0,
+            local which = genreButtons[addr]
+            if not which then return end
+            rowsJob = { genre = which.g, vgenre = which.v, id = 0,
                         owned = countsFrom(pages.data and pages.data.o), rented = countsFrom(pages.data and pages.data.r) }
             return
         end
@@ -923,10 +945,15 @@ local function moreRows(w)
     if not (UE.valid(owned) and UE.valid(other)) then rowsJob = nil return end
     for _ = 1, ROWS_PER_TICK do
         local row = nil
-        pcall(function() row = w["Generate A Data"](w, j.id, j.genre) end)
+        -- Since game build 26584658 it also takes the video-game genre (and
+        -- reads the game tables when Genre is 0, @0-@267).
+        pcall(function() row = w["Generate A Data"](w, j.id, j.genre, j.vgenre or 0) end)
         if not UE.valid(row) or j.id >= MAX_ROWS then rowsJob = nil return end
         j.id = j.id + 1
-        local sku = tonumber(field(field(field(UE.TryGet(row, "Product Struct"), BASE), BOX), SKU)) or 0
+        -- The owned-copies key is the film's SKU, or the game's for Genre 0
+        -- (the screen's own Map_Find @367).
+        local data = (j.genre == 0) and GAME or BOX
+        local sku = tonumber(field(field(field(UE.TryGet(row, "Product Struct"), BASE), data), SKU)) or 0
         local copies = j.owned[sku]
         pcall(function() (copies and owned or other):AddChild(row) end)
         -- Its own Set copies / Set Times Rented stop at the GameMode and
@@ -1045,10 +1072,10 @@ end
 
 local function onData(fields)
     if not UE.IsClient() then return end
-    local before = pages.data and pages.data.g
+    local before = pages.data and ((pages.data.g or "") .. "|" .. (pages.data.v or ""))
     pages.data = fields
     -- Genres researched since the buttons were made: make them again.
-    if next(genreButtons) and fields.g ~= before then genresAgain = true end
+    if next(genreButtons) and ((fields.g or "") .. "|" .. (fields.v or "")) ~= before then genresAgain = true end
 end
 
 local function onSearch(fields)

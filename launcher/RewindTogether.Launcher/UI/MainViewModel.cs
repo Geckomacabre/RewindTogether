@@ -40,6 +40,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         DismissNoticeCommand = new RelayCommand(() => NoticeText = "");
         UpdateCommand = new AsyncCommand(UpdateNowAsync);
         DismissUpdateCommand = new RelayCommand(() => { _updateDismissed = true; Raise(nameof(UpdateVisible)); });
+        OpenDiscordCommand = new RelayCommand(() => GameProcess.OpenInShell(DiscordUrl));
+        OpenGitHubCommand = new RelayCommand(() => GameProcess.OpenInShell(GitHubUrl));
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _timer.Tick += (_, _) => Tick();
@@ -65,6 +67,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public DateTime? GameStartedSeenAt { get; private set; }
 
     public string VersionText => "Launcher v" + AppInfo.Version;
+
+    /// <summary>The community Discord and the project's GitHub page (footer links).</summary>
+    public const string DiscordUrl = "https://discord.gg/C7gE5SHEzH";
+    public const string GitHubUrl = "https://github.com/" + ReleaseFeed.DefaultRepo;
+    public ICommand OpenDiscordCommand { get; }
+    public ICommand OpenGitHubCommand { get; }
 
     // ------------------------------------------------------------------ navigation
 

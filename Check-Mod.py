@@ -92,6 +92,7 @@ def smoke_pass():
     # anything behind in the project or, worse, in the game folder.
     sandbox = tempfile.mkdtemp(prefix="rewindtogether-test-")
     previous = os.getcwd()
+    lua = None
     try:
         os.chdir(sandbox)
         lua = lupa.LuaRuntime(unpack_returned_tuples=True)
@@ -114,6 +115,12 @@ def smoke_pass():
             failures += 1
     finally:
         os.chdir(previous)
+        # The mod's log and breadcrumb files stay open in the Lua state, and
+        # Windows will not delete an open file: close the state first, or every
+        # run leaves its sandbox behind in %TEMP%.
+        lua = chunk = None
+        import gc
+        gc.collect()
         shutil.rmtree(sandbox, ignore_errors=True)
 
 

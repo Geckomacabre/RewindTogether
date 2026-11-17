@@ -111,6 +111,10 @@
             <Border Grid.Row="3" Background="#0E0C22" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,1,0,0" Padding="28,9">
                 <DockPanel>
                     <TextBlock DockPanel.Dock="Right" Text="{Binding VersionText}" Style="{StaticResource Eyebrow}" VerticalAlignment="Center" />
+                    <Button DockPanel.Dock="Right" Style="{StaticResource SmallGhostButton}" Content="GitHub" Margin="0,0,14,0"
+                            Command="{Binding OpenGitHubCommand}" ToolTip="Rewind Together on GitHub: releases, source and bug reports" />
+                    <Button DockPanel.Dock="Right" Style="{StaticResource SmallGhostButton}" Content="Discord" Margin="0,0,8,0"
+                            Command="{Binding OpenDiscordCommand}" ToolTip="Join the Rewind Together Discord" />
                     <StackPanel Orientation="Horizontal">
                         <StackPanel.Resources>
                             <Style TargetType="TextBlock" BasedOn="{StaticResource Body}">

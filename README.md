@@ -24,6 +24,8 @@
   <a href="#-if-something-goes-wrong"><b>Help</b></a>
   &nbsp;·&nbsp;
   <a href="https://github.com/Geckomacabre/RewindTogether/issues"><b>Report a bug</b></a>
+  &nbsp;·&nbsp;
+  <a href="https://discord.gg/C7gE5SHEzH"><b>Discord</b></a>
 </p>
 
 <p align="center">
@@ -33,6 +35,12 @@
 ---
 
 ## 📼 Play in three steps
+
+> [!IMPORTANT]
+> **Everyone who plays needs their own copy of
+> [Retro Rewind - Video Store Simulator](https://store.steampowered.com/app/3552140/) on Steam.**
+> This is a mod, not the game: nothing from Retro Rewind is included in this download or this
+> repository, and the mod does nothing without the game installed.
 
 1. **[Download the latest release](https://github.com/Geckomacabre/RewindTogether/releases/latest)**,
    right-click the zip and choose **Extract All...**
@@ -237,6 +245,9 @@ have turned it on. A fresh install doesn't show one.)
 
 **Stuck outside the store, or in a wall?** Press **Esc** and choose **Back to the store**.
 
+**Want a hand, or to play with others?** Come and ask on the
+[Rewind Together Discord](https://discord.gg/C7gE5SHEzH).
+
 To remove the mod, use **Uninstall** in the launcher's Mods tab (close the game first).
 
 ---
@@ -271,7 +282,9 @@ To remove the mod, use **Uninstall** in the launcher's Mods tab (close the game 
 
 ## Credits
 
-- **Rewind Together:** built by the Rewind Together team with heavy help from **Claude
+- **Rewind Together:** by **[Geckomacabre](https://github.com/Geckomacabre)**
+  ([source and releases](https://github.com/Geckomacabre/RewindTogether),
+  [Discord](https://discord.gg/C7gE5SHEzH)), built with heavy help from **Claude
   (Anthropic)** through Claude Code. Most of the code, the reverse engineering and the testing
   were done by an AI agent working on the team's own copy of the game. Every claim in this README
   was checked in the running game unless marked otherwise.

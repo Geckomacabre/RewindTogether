@@ -1,7 +1,8 @@
 Rewind Together
-Version: 1.9.2
-Built:   2026-10-16
-Game:    Retro Rewind (Steam AppID 3552140)
+Version: 1.9.3
+Built:   2026-11-16
+Game:    Retro Rewind (Steam AppID 3552140), tested on Steam build
+         26584658 (the Video Game Rental update and its 11 Nov patch)
 Engine:  Unreal Engine 5.4
 Needs:   UE4SS 3.x
 
@@ -12,6 +13,55 @@ Unreal refuses mismatched builds.
 
 Check with:  rt.status   in the game's console (press ~ twice,
 type it, press Enter), or the launcher's Play tab.
+
+You need your own copy of Retro Rewind on Steam. Nothing from the
+game is included here: this is only the mod.
+
+
+CHANGES IN 1.9.3  -  updated for the Video Game Rental update.
+------------------------------------------------------
+  Retro Rewind's Video Game Rental update (5 Nov) and its patches
+  (6 and 11 Nov) changed 85 of the game's Blueprints that the mod
+  works with. Each change was compared against the October build,
+  and hosting, joining and the whole store were checked again on two
+  copies of the updated game: every tape, box, shelf, decoration,
+  poster, standee and customer, the money, level, clock and weather
+  match on host and guest.
+
+  * FIXED: a guest at the till could drag the HOST into the
+    register. The update added a customer-profile button to the
+    till; from checkout mode its click moves the first player's
+    character into the till's screen. A guest's click on it now
+    stays on the guest's own screen (their own till opens the
+    profile screen there), and clicks on that screen are not sent
+    to the host.
+  * FIXED: the office computer's Data page for guests. The game's
+    rows now take a video-game genre too; guests get the store's
+    video-game genre buttons as well as the movie ones, with the
+    copies owned and times rented for each game. (Checked in the
+    test suite; not yet seen on a guest's screen.)
+  * FIXED: film posters on a guest's screen used a function the
+    update renamed (they were redrawn by the game's own skin load,
+    so they looked right, but the mod retried every few seconds).
+  * FIXED: the end-of-day summary's buttons on a guest's screen
+    (the update renamed the "continue" button).
+  * Checked on the new build: the guest at the till (in and out,
+    the host never moves), the till's new screen opening on the
+    guest's own screen only, leaving the till from that screen, and
+    a guest leaving mid-checkout (the till is freed). Not yet
+    re-checked on the new build: a guest's whole sale with a
+    customer, and taking a tape off a shelf and back. Game shelves, game posters, the new
+    decorations and video-game cartridges are built on the shelf,
+    poster, decoration and cartridge classes the mod already
+    shares, so they are shared too (read from the game's files;
+    the test store has none of them yet).
+  * The README and HOW TO PLAY now say up front that everyone needs
+    their own copy of the game, and link the Discord
+    (https://discord.gg/C7gE5SHEzH) and GitHub. The launcher's
+    footer has Discord and GitHub buttons.
+  * Not yet done for guests: the till's customer profiles and ban
+    list (the host's), and the new Tech Shed electronics store (not
+    tried with a guest yet).
 
 
 CHANGES IN 1.9.2  -  far fewer stutters, for host and guests.

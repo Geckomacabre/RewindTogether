@@ -31,7 +31,8 @@ by design, TODO = planned, UNTESTED = built, not yet seen working live.
 | Choosing your character | character.lua, charscreen.lua, creator.lua | OK | The character screen (the game's own pause-menu frame, buttons and font): the 14 named regulars, or every body, skin, hair and colour, beard, glasses, top/bottom/shoes and colour, and height the town has; opens by itself the first time in each store (on the character made last), from the pause menu, on F4. Kept in RewindTogether.character.txt, one section per store (a key from the host's Steam ID and its "Save Slot Name", sent to guests as "chr"); a guest's choice reaches the host as FNames over ServerNotifyLoadedWorld. Height is the body's Character Scale, as for NPCs |
 | Carrying, shelving tapes | PickupActor_C, Shelve_C | OK | |
 | What another player carries | bodies.lua hand sockets | OK | The item sits on the body's hand (socket moved by minus the item's offset) |
-| Till: scan, cash, change, card | MembershipMachine_C, CheckOut_C, Scanner_Checkout_C | OK | 1.7.5: bill and drawer within 0.1 s of a press |
+| Till: scan, cash, change, card | MembershipMachine_C, CheckOut_C, Scanner_Checkout_C | OK | 1.7.5: bill and drawer within 0.1 s of a press. 1.9.3 (game build 26584658): entering and leaving re-checked live; the new customer-profile button (Membership_Button-Trigger_C) stays on the guest's own screen - from checkout mode it glides player 0 |
+| Till: customer profiles, ban list | MembershipMachine_C UI mode, UI_Screen_Membership_Widget_C | HOST | New in the Video Game Rental update; reads the AI Director and Statistic through the GameMode |
 | Build mode, skin tool, sell | MovingBox_C, AC_MeshSkin_C | OK | Shelf MODEL change: NO (mesh flow reads GameMode) |
 | End of day, level-ups | UI_EndOfTheDay_C | OK | dayend.lua |
 | The next morning | Core_Gamemode "Create a new day" | OK | The game puts only the host at the start zone; guests are now put beside them, facing the same way |
@@ -43,7 +44,7 @@ by design, TODO = planned, UNTESTED = built, not yet seen working live.
 ### Office and UI machines (show a UI on the player's own screen)
 | Machine | Guest status | Plan |
 |---|---|---|
-| Office computer | OK (1.7.4) | computer.lua |
+| Office computer | OK (1.7.4) | computer.lua. 1.9.3: the Data page's video-game genres (smoke-tested, not yet seen live) |
 | Catalogue | OK (1.8.0) | uimachines.lua: cards uncovered as far as the store's level goes, station cards drawn from the guest's own machines (the card's own Generate Text, the machine's soft picture handed back); Buy = action 21, placed by the host's own widget handler (no card made: it is never read) one per tick. Verified: a poster frame and the cotton candy machine |
 | Staff book (hire/fire) | OK (1.9.0) | staffbook.lua: the host sends who is in the book ("stf": name, pay, skills, photo, traits, job, about, favourite movie; the traits TSet reads with ForEach); the guest's game draws its own cards (plain numbers into the card's Staff before AddChild, so its Construct writes pay and skill words; texts, photo and trait lines after; again after every tab switch). Hire, fire and job = action 22 (what, the card's place, its pay): the host builds an unseen copy of the book's screen, has it draw the page from its GameMode and clicks that card's own button, inside asGuest (a refusal goes to the stand-in HUD; the guest shows the game's own string-table words). Steam stat 8 and achievements 8/9 count on the host's account. Measured live: both pages drawn, a job change, the level-20 refusal, a fire (the employee walked out) and a hire (walked in on both screens) |
 | Calendar (rewards, weather) | OK (1.9.0) | calendar.lua: the guest's own machine is given its weather actor and "Save Load", and its own Init Calendar draws the list (the guest's Steam), weather and check marks; the host's year and each day's events ("cal") are drawn with the game's own day cells (icons and bonus tooltips); each row's claimed mark is the store's. A Claim = action 23: the host clicks its own row (Achievement Reclame, +$100, +50 XP). Measured live: the guest's page identical to the host's, a claim paid the store once. A new day's redraw on a guest is untested live |
@@ -68,6 +69,7 @@ by design, TODO = planned, UNTESTED = built, not yet seen working live.
 |---|---|---|
 | Day/night lights and sounds | OK | worldsync.lua tells every time-of-day listener the host's time (94 told) |
 | Sun, sky, snow, season scenery | OK | worldsync.lua |
+| Tech Shed electronics store (buy games, repairs) | UNTESTED | New in the Video Game Rental update (ElectronicsStore_C, Electronics-GameDisplay_C); its racks are Shelve_C subclasses |
 | Seasonal events (fair, UFO, derby...) | NO? | EventSystem_C and Event_* bind through the GameMode |
 | Telephone (reservations, questions) | OK | Answering: the conversation on the guest's screen (talksync.lua), answered there. Ringing, its light, shake and the handset are mirrored (mirror.lua) |
 | TVs / movie player | OK | worldsync.lua starts the movie players and wires each TV (8/8 with a picture); the channel can differ from the host's |

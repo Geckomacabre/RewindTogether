@@ -55,7 +55,10 @@ local STATS = {
 }
 -- Plain text blocks, by the field that carries them.
 local TEXTS = { d = "txt_Date", ln = "txt_LevelName", lx = "txt_Level_Player-XP", lq = "txt_Level_XpNeed" }
-local BUTTONS = { "UX_Button_NewDay", "UX_Button_Base", "Button_115" }
+-- The Video Game Rental update (game build 26584658) renamed the summary's
+-- continue button UX_Button_Base -> UX_Button_ContinueToStats; the old name
+-- stays for older builds.
+local BUTTONS = { "UX_Button_NewDay", "UX_Button_ContinueToStats", "UX_Button_Base", "Button_115" }
 -- Shown or hidden by the summary's Construct and its XP animation - which a
 -- guest's copy never gets as far as (it finds no GameMode). MEASURED: a
 -- guest's XP page said "LEVEL UP!" over an empty unlock box the host's had

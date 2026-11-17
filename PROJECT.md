@@ -376,6 +376,44 @@ at exit) and no `GameInstance:ReceiveShutdown` hook, so the crash report is the 
 manager, host/join, a Steam-relay tunnel and a friends list. Its contract with the mod is
 `docs\LAUNCHER_CONTRACT.md`. The Steam parts can't be tested on one PC with one account.
 
+### After a game update (1.9.3: Steam build 26584658, the Video Game Rental update)
+
+The fake UE4SS in `test/` cannot see a game update: a renamed Blueprint function passes every
+smoke test and fails in the game. After each Retro Rewind patch:
+
+1. Check `steamapps\appmanifest_3552140.acf` "buildid" against `game_build` in mod.json (the
+   launcher warns players about a mismatch) and the mtime of `Content\Paks\RetroRewind-Windows.pak`.
+   The exe can stay byte-identical across a big update: this game is nearly all Blueprint.
+2. Re-dump the same classes from the new pak with bpdump (`%USERPROFILE%\RetroRewind-decomp\bpdump`,
+   `dump` with the `// Asset:` paths from the old `bp\*.txt`, `--out` a new folder: November's is
+   `RetroRewind-decomp\nov11`; the new classes the update added are in `nov11new`).
+3. `py -I dev/bpdiff.py <old bp> <new bp> Mods/RewindTogether/Scripts native/RewindNative/RewindNative.cpp report.txt`:
+   removed/re-typed members per class, then every name the mod uses that is gone or re-signatured.
+4. `bpdump list "."` against the old `pak_uassets.txt` for new assets; dump the new Blueprints and
+   read each one's parent (most new things are subclasses the mod already handles - replication
+   uses GetAllActorsOfClass, which includes subclasses).
+5. `bpdump callsites` for `GameplayStatics::GetGameMode\(` and `GetPlayer(Pawn|Controller|Character|CameraManager)\(`
+   (`"^RetroRewind/Content/.*\.uasset$"`, ~1 min each) against `bp\_global_*_callsites.tsv`: a new site in
+   a class a guest uses is a new place a guest is stopped (GameMode) or the host is moved (player 0).
+6. Then live: `coop_test.py up`, `worldcheck.py`, and the changed systems.
+
+What November's update changed for the mod (85 of 402 classes): PosterFrame "Apply Material for
+Film based on SKU" -> "Apply Material based on SKU"; UI_ScreenComputer_Widget "Generate A Data"
+gained a Video Game Genre parameter (Genre 0 = the game tables, the owned-copies key is then
+GameData's SKU); UI_EndOfTheDay's UX_Button_Base -> UX_Button_ContinueToStats; the till gained a
+customer-profile/ban screen ("Player is in UI mode") entered by a Membership_Button-Trigger_C child
+actor whose click, from checkout mode, glides GetPlayerPawn(0) - guestinput.lua keeps a guest's
+click on it local. CheckOut1_C is new but unused (0 instances); the store still uses CheckOut_C.
+The rented-out tapes the host hides at the origin are the host's extra Cartridge_Base_C count.
+Not done for guests yet: the till's profile/ban screen (host data only), the Tech Shed
+(ElectronicsStore_C, Electronics-GameDisplay_C - untested with a guest).
+
+Test-rig gotcha (cost a guest crash, 16 Nov 2026): a bridge `lua` command that calls a method on
+a component read from a property (`c:GetFName()` on "ref Componant Look At") crashes the game when
+the reference is empty - UE4SS hands back a wrapper around null. Guard with `UE.valid` and pcall,
+and keep sweeps to a few traces per call (99 in one tick stalled the guest past the net timeout).
+In checkout mode the till's camera owns the view: SetControlRotation does not aim the guest.
+
 ### Still open
 
 - Done since (measured, two copies): the guest HUD shows product-in-hand and look-at details.

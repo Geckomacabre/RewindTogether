@@ -66,7 +66,10 @@ def client_point(pid, frac):
     for line in out.splitlines():
         if line.startswith("rect ->"):
             parts = line.split()
-            w, h = int(parts[-2]), int(parts[-1])
+            try:
+                w, h = int(parts[-2]), int(parts[-1])
+            except ValueError:      # no RT_WINDRIVE: the helper printed an error
+                pass
     return int(frac[0] * w), int(frac[1] * h)
 
 
